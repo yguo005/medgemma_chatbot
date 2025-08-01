@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Health Consultant</title>
+    <link rel="stylesheet" href="static/css/mobile.css">
+</head>
+<body>
+    <!-- Header -->
+    <div class="header">
+        <button class="back-btn">←</button>
+        <h1>AI Health Consultant</h1>
+    </div>
+
+    <!-- Search Bar -->
+    <div class="search-container">
+        <input type="text" class="search-bar" placeholder="Search a message...">
+    </div>
+
+    <!-- Chat Container -->
+    <div class="chat-container" id="chat-container">
+        <!-- Welcome Message -->
+        <div class="message bot">
+            <div class="bot-avatar">🤖</div>
+            <div class="message-content">
+                <div>Welcome to AI Health Consultant!</div>
+                <div style="margin-top: 8px; font-size: 13px; opacity: 0.8;">
+                    Hi there 👋 I'm here to help you understand your symptoms before booking appointment.
+                </div>
+                
+                <!-- Media Upload Area -->
+                <div class="media-upload">
+                    <div class="upload-icon">📷</div>
+                    <div class="upload-text">
+                        Could you upload a photo about your symptoms, or describe your symptoms by voice or text?
+                    </div>
+                    <div class="upload-buttons">
+                        <button class="upload-btn" id="photo-btn">
+                            📷 Photo
+                        </button>
+                        <button class="upload-btn" id="voice-btn">
+                            🎤 Voice
+                        </button>
+                        <button class="upload-btn" id="text-btn">
+                            ✏️ Text
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Input Area -->
+    <div class="input-area">
+        <input type="text" class="message-input" id="message-input" placeholder="Type a message...">
+        <button class="send-btn" id="send-btn">➤</button>
+    </div>
+
+    <!-- Hidden file inputs -->
+    <input type="file" id="photo-input" accept="image/*" style="display: none;">
+    <input type="file" id="audio-input" accept="audio/*" style="display: none;">
+
+    <script src="static/js/mobile.js"></script>
+</body>
+</html> 

@@ -4,6 +4,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from dotenv import load_dotenv
+from app.config import DATA_PATH, DB_FAISS_PATH, EMBEDDING_MODEL, CHUNK_SIZE, CHUNK_OVERLAP
 
 # Load environment variables
 load_dotenv()
@@ -11,10 +12,6 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 if not OPENAI_API_KEY:
     raise ValueError("❌ ERROR: OpenAI API Key is missing! Set 'OPENAI_API_KEY' in your environment.")
-
-# Define data and FAISS storage paths
-DATA_PATH = "data/"
-FAISS_DB_PATH = "vectorstore/db_faiss"
 
 def load_pdf_files(data_dir: str):
     """Loads all PDF files in the specified directory using PyPDFLoader."""
@@ -35,8 +32,8 @@ def load_pdf_files(data_dir: str):
 def create_chunks(extracted_data):
     """Splits documents into smaller text chunks for embedding."""
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=50
+        chunk_size=CHUNK_SIZE,
+        chunk_overlap=CHUNK_OVERLAP
     )
     text_chunks = text_splitter.split_documents(extracted_data)
     print(f"✅ Created {len(text_chunks)} text chunks.")
@@ -44,7 +41,7 @@ def create_chunks(extracted_data):
 
 def check_existing_faiss():
     """Checks if an existing FAISS database is available."""
-    if os.path.exists(FAISS_DB_PATH):
+    if os.path.exists(DB_FAISS_PATH):
         print("🔍 FAISS vector store already exists. Overwriting...")
         return True
     return False
@@ -60,14 +57,14 @@ def main():
     text_chunks = create_chunks(documents)
     
     # 3. Load embedding model
-    embedding_model = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
+    embedding_model = OpenAIEmbeddings(model=EMBEDDING_MODEL, openai_api_key=OPENAI_API_KEY)
     test_vector = embedding_model.embed_query("Test query")  # Ensure embedding dimension matches FAISS
     print(f"✅ OpenAI Embedding Model Loaded (Vector Dimension: {len(test_vector)})")
 
     # 4. Create FAISS vector store (overwrite if exists)
     check_existing_faiss()
     db = FAISS.from_documents(text_chunks, embedding_model)
-    db.save_local(FAISS_DB_PATH)
+    db.save_local(DB_FAISS_PATH)
     print("✅ FAISS vector store created and saved successfully.")
 
 if __name__ == "__main__":
