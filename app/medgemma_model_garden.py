@@ -5,8 +5,9 @@ import asyncio
 import json
 from google.cloud import aiplatform
 from google.oauth2 import service_account
-import aiohttp
-import asyncio
+import openai
+import google.auth
+import google.auth.transport.requests
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -14,14 +15,15 @@ logger = logging.getLogger(__name__)
 
 class MedGemmaModelGarden:
     """
-    MedGemma service using Google Cloud Model Garden
-    Optimized for mobile app backends
+    MedGemma service using Google Cloud Model Garden,
+    aligned with the official quick-start guide.
     """
     
     def __init__(
         self, 
         project_id: str,
         location: str = "us-central1",
+        endpoint_id: str = "",
         credentials_path: Optional[str] = None
     ):
         """
@@ -30,245 +32,154 @@ class MedGemmaModelGarden:
         Args:
             project_id: Google Cloud Project ID
             location: GCP region (default: us-central1)
+            endpoint_id: Your Vertex AI Endpoint ID
             credentials_path: Path to service account JSON file
         """
         self.project_id = project_id
         self.location = location
+        self.endpoint_id = endpoint_id
         self.credentials_path = credentials_path
-        self.client = None
+        self.endpoint = None
+        self.openai_client = None
         
-        # Model endpoint configuration
-        self.model_name = "medgemma-7b"
-        self.endpoint_name = f"projects/{project_id}/locations/{location}/endpoints/medgemma"
+        self.model_name = "medgemma-27b-it"  # Defaulting to a capable model
         
-        # Initialize the client
         self._initialize_client()
     
     def _initialize_client(self):
-        """Initialize Google Cloud AI Platform client"""
+        """Initialize clients for Vertex AI and OpenAI SDK"""
         try:
-            # Set up credentials
+            creds, _ = google.auth.default()
             if self.credentials_path and os.path.exists(self.credentials_path):
-                credentials = service_account.Credentials.from_service_account_file(
-                    self.credentials_path
-                )
-                aiplatform.init(
-                    project=self.project_id,
-                    location=self.location,
-                    credentials=credentials
-                )
-            else:
-                # Use default credentials (for deployed environments)
-                aiplatform.init(
-                    project=self.project_id,
-                    location=self.location
+                creds = service_account.Credentials.from_service_account_file(
+                    self.credentials_path, scopes=["https://www.googleapis.com/auth/cloud-platform"]
                 )
             
-            logger.info("✅ Model Garden client initialized successfully")
-            self.client = aiplatform
+            aiplatform.init(
+                project=self.project_id,
+                location=self.location,
+                credentials=creds
+            )
             
+            self.endpoint = aiplatform.Endpoint(self.endpoint_id)
+            logger.info(f"✅ Vertex AI Endpoint loaded: {self.endpoint.display_name}")
+
+            # Set up OpenAI-compatible client
+            auth_req = google.auth.transport.requests.Request()
+            creds.refresh(auth_req)
+
+            base_url = f"https://{self.location}-aiplatform.googleapis.com/v1beta1/{self.endpoint.resource_name}"
+            
+            self.openai_client = openai.OpenAI(base_url=base_url, api_key=creds.token)
+            logger.info("✅ OpenAI-compatible client for Vertex AI initialized")
+
         except Exception as e:
             logger.error(f"❌ Failed to initialize Model Garden client: {e}")
-            self.client = None
-    
+            self.endpoint = None
+            self.openai_client = None
+
     async def generate_medical_response(
         self, 
-        query: str, 
-        context: str = "", 
+        messages: list, 
         max_tokens: int = 512,
         temperature: float = 0.3
     ) -> Dict[str, Any]:
         """
-        Generate medical response using MedGemma via Model Garden
-        
-        Args:
-            query: User's medical question
-            context: Additional context (symptoms, history, etc.)
-            max_tokens: Maximum response length
-            temperature: Sampling temperature
-        
-        Returns:
-            Dict containing the response and metadata
+        Generate medical response using MedGemma via an OpenAI-compatible interface.
         """
-        if not self.client:
+        if not self.openai_client:
             return {
                 "success": False,
-                "response": "MedGemma Model Garden is not available. Please check the configuration.",
+                "response": "MedGemma client is not available.",
                 "error": "Client not initialized"
             }
         
         try:
-            # Construct the medical prompt
-            prompt = self._construct_medical_prompt(query, context)
-            
-            # Prepare the prediction request
-            instances = [{
-                "prompt": prompt,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-                "top_p": 0.9,
-                "top_k": 40
-            }]
-            
-            # Make prediction request
-            endpoint = aiplatform.Endpoint(self.endpoint_name)
-            
-            # Run the prediction asynchronously
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
+            model_response = await loop.run_in_executor(
                 None,
-                lambda: endpoint.predict(instances=instances)
+                lambda: self.openai_client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
             )
+            response_text = model_response.choices[0].message.content
             
-            # Extract response
-            if response.predictions and len(response.predictions) > 0:
-                prediction = response.predictions[0]
-                generated_text = prediction.get("generated_text", "")
-                response_text = self._extract_response(generated_text, prompt)
-                
-                logger.info("✅ MedGemma Model Garden response generated successfully")
-                
-                return {
-                    "success": True,
-                    "response": response_text,
-                    "model_used": "medgemma-model-garden",
-                    "endpoint": self.endpoint_name,
-                    "tokens_used": len(response_text.split())  # Approximate
-                }
-            else:
-                raise Exception("No predictions returned from model")
-                
+            logger.info("✅ MedGemma response generated successfully via OpenAI client")
+            
+            return {
+                "success": True,
+                "response": self._extract_response(response_text),
+                "model_used": model_response.model,
+            }
         except Exception as e:
-            logger.error(f"❌ MedGemma Model Garden generation failed: {e}")
+            logger.error(f"❌ MedGemma generation failed: {e}")
             return {
                 "success": False,
-                "response": "I apologize, but I'm having trouble processing your medical query right now. Please consult with a healthcare professional.",
+                "response": "I apologize, but I'm having trouble processing your query right now.",
                 "error": str(e)
             }
-    
-    async def analyze_symptoms(
-        self, 
-        symptoms: str, 
-        duration: str = "", 
-        intensity: str = "", 
-        timing: str = ""
-    ) -> Dict[str, Any]:
-        """
-        Analyze symptoms using MedGemma Model Garden
-        
-        Args:
-            symptoms: Primary symptoms
-            duration: How long symptoms have persisted
-            intensity: Severity of symptoms
-            timing: When symptoms occur
-        
-        Returns:
-            Dict containing medical analysis
-        """
-        # Construct detailed context
-        context_parts = [f"Symptoms: {symptoms}"]
-        if duration:
-            context_parts.append(f"Duration: {duration}")
-        if intensity:
-            context_parts.append(f"Intensity: {intensity}")
-        if timing:
-            context_parts.append(f"Timing: {timing}")
-        
-        context = ". ".join(context_parts)
-        
-        query = "Based on these symptoms, what medical conditions should be considered and what steps should the patient take?"
-        
-        return await self.generate_medical_response(query, context)
-    
-    async def enhance_diagnosis(self, symptoms: str, rag_response: str) -> str:
-        """
-        Enhance diagnosis by combining symptoms with RAG response
-        
-        Args:
-            symptoms: User-described symptoms
-            rag_response: Response from RAG system
-        
-        Returns:
-            Enhanced medical explanation
-        """
-        query = f"Given these symptoms: {symptoms}\n\nAnd this medical information: {rag_response}\n\nProvide a clear, helpful medical summary with appropriate recommendations."
-        
-        result = await self.generate_medical_response(query)
-        
-        if result["success"]:
-            return result["response"]
-        else:
-            # Fallback to original RAG response
-            return rag_response
-    
-    def _construct_medical_prompt(self, query: str, context: str = "") -> str:
-        """Construct a proper medical prompt for MedGemma"""
-        
-        system_prompt = """You are a medical AI assistant. Provide helpful, accurate medical information while always emphasizing the importance of consulting healthcare professionals for proper diagnosis and treatment.
 
-Important guidelines:
-- Be informative but not diagnostic
-- Suggest when to seek medical attention
-- Mention relevant symptoms or conditions
-- Always recommend professional medical consultation
-- Keep responses concise and clear"""
-        
-        if context:
-            prompt = f"{system_prompt}\n\nContext: {context}\n\nQuestion: {query}\n\nResponse:"
-        else:
-            prompt = f"{system_prompt}\n\nQuestion: {query}\n\nResponse:"
-        
-        return prompt
+    async def analyze_symptoms_text(self, symptoms: str, context: str = "") -> Dict[str, Any]:
+        """Analyzes text-based symptoms."""
+        system_prompt = self._construct_medical_prompt()
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Context: {context}\n\nSymptoms: {symptoms}\n\nPlease provide an analysis."}
+        ]
+        return await self.generate_medical_response(messages)
+
+    async def analyze_symptoms_multimodal(self, text_prompt: str, image_url: str) -> Dict[str, Any]:
+        """Analyzes symptoms with text and an image."""
+        system_prompt = self._construct_medical_prompt()
+        messages = [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": system_prompt}]
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": text_prompt},
+                    {"type": "image_url", "image_url": {"url": image_url}}
+                ]
+            }
+        ]
+        return await self.generate_medical_response(messages)
     
-    def _extract_response(self, generated_text: str, prompt: str) -> str:
-        """Extract the actual response from generated text"""
-        # Remove the prompt from the generated text
-        if generated_text.startswith(prompt):
-            response = generated_text[len(prompt):].strip()
-        else:
-            response = generated_text.strip()
-        
-        # Clean up the response
-        response = response.replace("</s>", "").strip()
-        
-        # Ensure the response ends properly
-        if response and not response.endswith(('.', '!', '?')):
-            # Find the last complete sentence
-            last_period = response.rfind('.')
-            last_exclamation = response.rfind('!')
-            last_question = response.rfind('?')
-            
-            last_punct = max(last_period, last_exclamation, last_question)
-            if last_punct > len(response) * 0.7:
-                response = response[:last_punct + 1]
-        
+    def _construct_medical_prompt(self) -> str:
+        """Constructs a standard medical prompt for MedGemma."""
+        return """You are a medical AI assistant. Your role is to provide helpful, accurate medical information while always emphasizing the importance of consulting a healthcare professional for diagnosis and treatment. Be informative but not diagnostic."""
+    
+    def _extract_response(self, generated_text: str) -> str:
+        """Extracts and cleans the response."""
+        response = generated_text.replace("</s>", "").strip()
         return response
-    
+
     def get_model_info(self) -> Dict[str, Any]:
-        """Get information about the Model Garden setup"""
+        """Gets information about the Model Garden setup."""
+        if not self.endpoint:
+            return {"error": "Endpoint not initialized"}
         return {
             "model_name": self.model_name,
             "project_id": self.project_id,
             "location": self.location,
-            "endpoint": self.endpoint_name,
-            "client_initialized": self.client is not None,
+            "endpoint_name": self.endpoint.display_name,
+            "client_initialized": self.openai_client is not None,
             "service": "google-cloud-model-garden"
         }
     
-    async def health_check(self) -> Dict[str, bool]:
-        """Check if the Model Garden service is healthy"""
+    async def health_check(self) -> Dict[str, Any]:
+        """Checks if the Model Garden service is healthy."""
         try:
-            # Simple test query
-            test_result = await self.generate_medical_response(
-                "What is a fever?", 
-                max_tokens=50
-            )
-            
+            test_messages = [{"role": "user", "content": "What is a fever?"}]
+            test_result = await self.generate_medical_response(test_messages, max_tokens=50)
             return {
                 "model_garden_available": test_result["success"],
                 "endpoint_accessible": True
             }
-            
         except Exception as e:
             logger.error(f"❌ Model Garden health check failed: {e}")
             return {
