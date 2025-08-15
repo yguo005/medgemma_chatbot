@@ -1,8 +1,14 @@
 import os
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+from transformers import (
+    AutoTokenizer, 
+    AutoModelForCausalLM, 
+    AutoModelForImageTextToText,
+    BitsAndBytesConfig,
+    pipeline
+)
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
@@ -16,20 +22,34 @@ class MedGemmaService:
     Based on Google Health's MedGemma model
     """
     
-    def __init__(self, model_name: str = "google/medgemma-7b", device: str = "auto"):
+    def __init__(
+        self, 
+        model_name: str = "google/medgemma-7b", 
+        device: str = "auto",
+        use_quantization: bool = False,
+        multimodal: bool = False
+    ):
         """
         Initialize MedGemma service
         
         Args:
             model_name: HuggingFace model identifier for MedGemma
             device: Device to run the model on ("auto", "cpu", "cuda")
+            use_quantization: Enable 4-bit quantization for memory efficiency
+            multimodal: Use multimodal variant for image-text-to-text tasks
         """
         self.model_name = model_name
         self.device = self._determine_device(device)
+        self.use_quantization = use_quantization
+        self.multimodal = multimodal
         self.model = None
         self.tokenizer = None
         self.pipeline = None
         self.executor = ThreadPoolExecutor(max_workers=2)  # For async operations
+        
+        # Determine the appropriate task and model class
+        self.task = "image-text-to-text" if multimodal else "text-generation"
+        self.model_class = AutoModelForImageTextToText if multimodal else AutoModelForCausalLM
         
         # Initialize the model
         self._initialize_model()
@@ -46,10 +66,12 @@ class MedGemmaService:
         return device
     
     def _initialize_model(self):
-        """Initialize the MedGemma model and tokenizer"""
+        """Initialize the MedGemma model and tokenizer with improved configuration"""
         try:
             logger.info(f"🔄 Loading MedGemma model: {self.model_name}")
             logger.info(f"🖥️ Using device: {self.device}")
+            logger.info(f"🔧 Quantization: {'Enabled' if self.use_quantization else 'Disabled'}")
+            logger.info(f"🖼️ Multimodal: {'Enabled' if self.multimodal else 'Disabled'}")
             
             # Load tokenizer
             self.tokenizer = AutoTokenizer.from_pretrained(
@@ -57,33 +79,54 @@ class MedGemmaService:
                 trust_remote_code=True
             )
             
-            # Load model with appropriate settings
+            # Configure model loading parameters
             model_kwargs = {
                 "trust_remote_code": True,
-                "torch_dtype": torch.float16 if self.device != "cpu" else torch.float32,
                 "low_cpu_mem_usage": True
             }
             
-            if self.device == "cuda":
+            # Use torch.bfloat16 for better performance and memory efficiency
+            if self.device != "cpu":
+                model_kwargs["torch_dtype"] = torch.bfloat16
                 model_kwargs["device_map"] = "auto"
+            else:
+                model_kwargs["torch_dtype"] = torch.float32
             
-            self.model = AutoModelForCausalLM.from_pretrained(
+            # Add quantization configuration if enabled
+            if self.use_quantization and self.device == "cuda":
+                logger.info("🔧 Enabling 4-bit quantization for memory efficiency")
+                model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.bfloat16,
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_quant_type="nf4"
+                )
+            elif self.use_quantization and self.device != "cuda":
+                logger.warning("⚠️ Quantization is only supported on CUDA devices. Disabling quantization.")
+                self.use_quantization = False
+            
+            # Load the appropriate model class
+            self.model = self.model_class.from_pretrained(
                 self.model_name,
                 **model_kwargs
             )
             
-            # Move to device if not using device_map
-            if self.device != "cuda":
+            # Move to device if not using device_map (for non-CUDA devices)
+            if self.device != "cuda" and not self.use_quantization:
                 self.model = self.model.to(self.device)
             
             # Create pipeline for easier inference
-            self.pipeline = pipeline(
-                "text-generation",
-                model=self.model,
-                tokenizer=self.tokenizer,
-                device=0 if self.device == "cuda" else -1,
-                torch_dtype=torch.float16 if self.device != "cpu" else torch.float32
-            )
+            pipeline_kwargs = {
+                "model": self.model,
+                "tokenizer": self.tokenizer,
+            }
+            
+            if not self.use_quantization:
+                pipeline_kwargs["device"] = 0 if self.device == "cuda" else -1
+                if self.device != "cpu":
+                    pipeline_kwargs["torch_dtype"] = torch.bfloat16
+            
+            self.pipeline = pipeline(self.task, **pipeline_kwargs)
             
             logger.info("✅ MedGemma model loaded successfully")
             
@@ -188,6 +231,49 @@ Important guidelines:
             return_full_text=True
         )
     
+    def _generate_multimodal_response(self, inputs: Dict[str, Any], max_length: int, temperature: float) -> Dict[str, Any]:
+        """Generate multimodal response using the image-text-to-text pipeline (runs in thread pool)"""
+        return self.pipeline(
+            inputs,
+            max_length=max_length,
+            temperature=temperature,
+            do_sample=True,
+            pad_token_id=self.tokenizer.eos_token_id,
+            num_return_sequences=1
+        )
+    
+    def _construct_multimodal_prompt(self, text_prompt: str) -> str:
+        """Construct a proper multimodal medical prompt for MedGemma"""
+        
+        system_prompt = """You are a medical AI assistant analyzing medical images. Provide helpful, accurate medical observations while always emphasizing the importance of consulting healthcare professionals for proper diagnosis and treatment.
+
+Important guidelines:
+- Describe what you observe in the image objectively
+- Mention relevant medical findings or patterns
+- Suggest when professional medical evaluation is needed
+- Do not provide definitive diagnoses
+- Keep responses clear and informative"""
+        
+        return f"{system_prompt}\n\nTask: {text_prompt}\n\nObservation:"
+    
+    def _extract_multimodal_response(self, result: Dict[str, Any]) -> str:
+        """Extract the actual response from multimodal generation result"""
+        if isinstance(result, list) and len(result) > 0:
+            generated_text = result[0].get("generated_text", "")
+        elif isinstance(result, dict):
+            generated_text = result.get("generated_text", "")
+        else:
+            generated_text = str(result)
+        
+        # Clean up the response
+        response = generated_text.replace("</s>", "").strip()
+        
+        # Remove any remaining prompt artifacts
+        if "Observation:" in response:
+            response = response.split("Observation:")[-1].strip()
+        
+        return response
+    
     def _extract_response(self, generated_text: str, prompt: str) -> str:
         """Extract the actual response from generated text"""
         # Remove the prompt from the generated text
@@ -246,6 +332,81 @@ Important guidelines:
         
         return await self.generate_medical_response(query, context)
     
+    async def analyze_image_with_text(
+        self, 
+        image_path: str, 
+        text_prompt: str = "Describe what you see in this medical image.",
+        max_length: int = 512,
+        temperature: float = 0.3
+    ) -> Dict[str, Any]:
+        """
+        Analyze medical images with text prompts using multimodal MedGemma
+        
+        Args:
+            image_path: Path to the image file or image URL
+            text_prompt: Text prompt to guide the analysis
+            max_length: Maximum response length
+            temperature: Sampling temperature
+        
+        Returns:
+            Dict containing the multimodal analysis
+        """
+        if not self.multimodal:
+            return {
+                "success": False,
+                "response": "Multimodal analysis is not enabled. Please initialize with multimodal=True.",
+                "error": "Multimodal not enabled"
+            }
+        
+        if not self.pipeline:
+            return {
+                "success": False,
+                "response": "MedGemma model is not available. Please check the model loading.",
+                "error": "Model not initialized"
+            }
+        
+        try:
+            # Construct the multimodal prompt
+            prompt = self._construct_multimodal_prompt(text_prompt)
+            
+            # Prepare inputs for multimodal pipeline
+            inputs = {
+                "text": prompt,
+                "images": image_path
+            }
+            
+            # Run inference in thread pool to avoid blocking
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                self.executor,
+                self._generate_multimodal_response,
+                inputs,
+                max_length,
+                temperature
+            )
+            
+            # Extract and clean the response
+            response = self._extract_multimodal_response(result)
+            
+            logger.info("✅ MedGemma multimodal response generated successfully")
+            
+            return {
+                "success": True,
+                "response": response,
+                "model_used": self.model_name,
+                "device": self.device,
+                "mode": "multimodal",
+                "prompt_text": text_prompt
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ MedGemma multimodal generation failed: {e}")
+            return {
+                "success": False,
+                "response": "I apologize, but I'm having trouble analyzing the image right now. Please try describing the symptoms in text.",
+                "error": str(e)
+            }
+    
     async def enhance_diagnosis(self, symptoms: str, rag_response: str) -> str:
         """
         Enhance diagnosis by combining symptoms with RAG response using MedGemma
@@ -268,15 +429,26 @@ Important guidelines:
             return rag_response
     
     def get_model_info(self) -> Dict[str, Any]:
-        """Get information about the loaded model"""
+        """Get information about the loaded model and its capabilities"""
         return {
             "model_name": self.model_name,
             "device": self.device,
             "model_loaded": self.model is not None,
             "tokenizer_loaded": self.tokenizer is not None,
             "pipeline_ready": self.pipeline is not None,
+            "task": self.task,
+            "multimodal_enabled": self.multimodal,
+            "quantization_enabled": self.use_quantization,
+            "model_class": self.model_class.__name__ if self.model_class else None,
+            "torch_dtype": "bfloat16" if self.device != "cpu" else "float32",
             "cuda_available": torch.cuda.is_available(),
-            "mps_available": torch.backends.mps.is_available() if hasattr(torch.backends, 'mps') else False
+            "mps_available": torch.backends.mps.is_available() if hasattr(torch.backends, 'mps') else False,
+            "capabilities": {
+                "text_generation": True,
+                "image_analysis": self.multimodal,
+                "memory_efficient": self.use_quantization,
+                "async_processing": True
+            }
         }
     
     def __del__(self):
