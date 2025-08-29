@@ -2,8 +2,8 @@ import os
 from typing import Optional
 
 # Path settings
-DATA_PATH = "data/"
-DB_FAISS_PATH = "vectorstore/db_faiss"
+DATA_PATH = "data/document/"
+DB_FAISS_PATH = "data/vectorstore/db_faiss"
 
 # ==========================================
 # PHASE 1: RAG Configuration (OpenAI Embeddings)
