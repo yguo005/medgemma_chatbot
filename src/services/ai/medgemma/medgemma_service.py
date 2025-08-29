@@ -5,9 +5,17 @@ import torch
 from transformers import (
     AutoTokenizer, 
     AutoModelForCausalLM, 
-    BitsAndBytesConfig,
-    pipeline
+    BitsAndBytesConfig
 )
+
+# Try to import pipeline (may be missing in corrupted installations)
+try:
+    from transformers import pipeline
+    PIPELINE_AVAILABLE = True
+except ImportError:
+    pipeline = None
+    PIPELINE_AVAILABLE = False
+    logging.warning("⚠️ transformers.pipeline not available. MedGemma service will be disabled.")
 
 # Try to import AutoModelForImageTextToText (available in transformers >= 4.42.0)
 try:
@@ -65,6 +73,14 @@ class MedGemmaService:
         
         self.task = "image-text-to-text" if multimodal else "text-generation"
         self.model_class = AutoModelForImageTextToText if (multimodal and MULTIMODAL_AVAILABLE) else AutoModelForCausalLM
+        
+        # Check if pipeline is available
+        if not PIPELINE_AVAILABLE:
+            logger.error("❌ transformers.pipeline not available. MedGemma service disabled.")
+            self.model = None
+            self.tokenizer = None
+            self.pipeline = None
+            return
         
         # Initialize the model
         self._initialize_model()
