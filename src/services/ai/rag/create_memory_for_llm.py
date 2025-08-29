@@ -139,7 +139,7 @@ def check_existing_faiss():
     """Checks if an existing FAISS database is available."""
     abs_db_path = get_absolute_path(DB_FAISS_PATH)
     if os.path.exists(abs_db_path):
-        print("🔍 FAISS vector store already exists. Overwriting...")
+        print(" FAISS vector store already exists. Overwriting...")
         return True
     return False
 

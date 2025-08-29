@@ -5,10 +5,19 @@ import torch
 from transformers import (
     AutoTokenizer, 
     AutoModelForCausalLM, 
-    AutoModelForImageTextToText,
     BitsAndBytesConfig,
     pipeline
 )
+
+# Try to import AutoModelForImageTextToText (available in transformers >= 4.42.0)
+try:
+    from transformers import AutoModelForImageTextToText
+    MULTIMODAL_AVAILABLE = True
+except ImportError:
+    # Fallback for older transformers versions
+    AutoModelForImageTextToText = None
+    MULTIMODAL_AVAILABLE = False
+    logging.warning(" AutoModelForImageTextToText not available. Multimodal features disabled. Upgrade transformers to >= 4.42.0 for full functionality.")
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
@@ -48,8 +57,14 @@ class MedGemmaService:
         self.executor = ThreadPoolExecutor(max_workers=2)  # For async operations
         
         # Determine the appropriate task and model class
+        # Disable multimodal if not available in current transformers version
+        if multimodal and not MULTIMODAL_AVAILABLE:
+            logger.warning(" Multimodal requested but not available. Falling back to text-only mode.")
+            multimodal = False
+            self.multimodal = False
+        
         self.task = "image-text-to-text" if multimodal else "text-generation"
-        self.model_class = AutoModelForImageTextToText if multimodal else AutoModelForCausalLM
+        self.model_class = AutoModelForImageTextToText if (multimodal and MULTIMODAL_AVAILABLE) else AutoModelForCausalLM
         
         # Initialize the model
         self._initialize_model()
@@ -68,10 +83,10 @@ class MedGemmaService:
     def _initialize_model(self):
         """Initialize the MedGemma model and tokenizer with improved configuration"""
         try:
-            logger.info(f"🔄 Loading MedGemma model: {self.model_name}")
-            logger.info(f"🖥️ Using device: {self.device}")
-            logger.info(f"🔧 Quantization: {'Enabled' if self.use_quantization else 'Disabled'}")
-            logger.info(f"🖼️ Multimodal: {'Enabled' if self.multimodal else 'Disabled'}")
+            logger.info(f" Loading MedGemma model: {self.model_name}")
+            logger.info(f" Using device: {self.device}")
+            logger.info(f" Quantization: {'Enabled' if self.use_quantization else 'Disabled'}")
+            logger.info(f" Multimodal: {'Enabled' if self.multimodal else 'Disabled'}")
             
             # Load tokenizer
             self.tokenizer = AutoTokenizer.from_pretrained(
@@ -102,7 +117,7 @@ class MedGemmaService:
                     bnb_4bit_quant_type="nf4"
                 )
             elif self.use_quantization and self.device != "cuda":
-                logger.warning("⚠️ Quantization is only supported on CUDA devices. Disabling quantization.")
+                logger.warning(" Quantization is only supported on CUDA devices. Disabling quantization.")
                 self.use_quantization = False
             
             # Load the appropriate model class
@@ -131,10 +146,10 @@ class MedGemmaService:
             # Configure generation settings to match official implementation
             self.pipeline.model.generation_config.do_sample = False
             
-            logger.info("✅ MedGemma model loaded successfully")
+            logger.info(" MedGemma model loaded successfully")
             
         except Exception as e:
-            logger.error(f"❌ Failed to load MedGemma model: {e}")
+            logger.error(f" Failed to load MedGemma model: {e}")
             self.model = None
             self.tokenizer = None
             self.pipeline = None
@@ -195,7 +210,7 @@ class MedGemmaService:
             }
             
         except Exception as e:
-            logger.error(f"❌ MedGemma generation failed: {e}")
+            logger.error(f" MedGemma generation failed: {e}")
             return {
                 "success": False,
                 "response": "I apologize, but I'm having trouble processing your medical query right now. Please consult with a healthcare professional.",
@@ -354,11 +369,16 @@ Important guidelines:
         Returns:
             Dict containing the multimodal analysis
         """
-        if not self.multimodal:
+        if not self.multimodal or not MULTIMODAL_AVAILABLE:
+            error_msg = "Multimodal analysis is not available. " + (
+                "Please upgrade transformers to >= 4.42.0 for multimodal support." 
+                if not MULTIMODAL_AVAILABLE 
+                else "Please initialize with multimodal=True."
+            )
             return {
                 "success": False,
-                "response": "Multimodal analysis is not enabled. Please initialize with multimodal=True.",
-                "error": "Multimodal not enabled"
+                "response": error_msg,
+                "error": "Multimodal not available"
             }
         
         if not self.pipeline:
@@ -391,7 +411,7 @@ Important guidelines:
             # Extract and clean the response
             response = self._extract_multimodal_response(result)
             
-            logger.info("✅ MedGemma multimodal response generated successfully")
+            logger.info(" MedGemma multimodal response generated successfully")
             
             return {
                 "success": True,
@@ -403,7 +423,7 @@ Important guidelines:
             }
             
         except Exception as e:
-            logger.error(f"❌ MedGemma multimodal generation failed: {e}")
+            logger.error(f" MedGemma multimodal generation failed: {e}")
             return {
                 "success": False,
                 "response": "I apologize, but I'm having trouble analyzing the image right now. Please try describing the symptoms in text.",
