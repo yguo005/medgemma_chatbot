@@ -11,8 +11,17 @@ from dotenv import load_dotenv
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-# Now import from config
-from config.settings import DATA_PATH, DB_FAISS_PATH, EMBEDDING_MODEL, CHUNK_SIZE, CHUNK_OVERLAP
+# Dynamic import to avoid module-level import errors
+try:
+    from config.settings import DATA_PATH, DB_FAISS_PATH, EMBEDDING_MODEL, CHUNK_SIZE, CHUNK_OVERLAP
+except ImportError:
+    # Fallback configuration for Colab
+    print(" Warning: Could not import config.settings, using fallback configuration")
+    DATA_PATH = "data/document"
+    DB_FAISS_PATH = "data/vectorstore/db_faiss" 
+    EMBEDDING_MODEL = "text-embedding-ada-002"
+    CHUNK_SIZE = 500
+    CHUNK_OVERLAP = 50
 
 # Load environment variables
 load_dotenv()
@@ -43,7 +52,7 @@ def load_pdf_files(data_dir: str):
 
     loader = DirectoryLoader(abs_data_dir, glob="*.pdf", loader_cls=PyPDFLoader)
     documents = loader.load()
-    print(f"✅ Loaded {len(documents)} documents from {len(pdf_files)} PDF file(s)")
+    print(f" Loaded {len(documents)} documents from {len(pdf_files)} PDF file(s)")
     return documents
 
 def create_chunks(extracted_data):
