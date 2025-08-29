@@ -1,9 +1,17 @@
 import os
+import sys
+from pathlib import Path
 from langchain_community.document_loaders import PyPDFLoader, DirectoryLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from dotenv import load_dotenv
+
+# Add project root to Python path for imports
+project_root = Path(__file__).parent.parent.parent.parent
+sys.path.insert(0, str(project_root))
+
+# Now import from config
 from config.settings import DATA_PATH, DB_FAISS_PATH, EMBEDDING_MODEL, CHUNK_SIZE, CHUNK_OVERLAP
 
 # Load environment variables
@@ -13,20 +21,29 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise ValueError(" ERROR: OpenAI API Key is missing! Set 'OPENAI_API_KEY' in your environment.")
 
+def get_absolute_path(relative_path: str) -> str:
+    """Convert relative path to absolute path from project root."""
+    if os.path.isabs(relative_path):
+        return relative_path
+    return str(project_root / relative_path)
+
 def load_pdf_files(data_dir: str):
     """Loads all PDF files in the specified directory using PyPDFLoader."""
-    if not os.path.exists(data_dir):
-        print(f" ERROR: Data directory '{data_dir}' not found.")
+    abs_data_dir = get_absolute_path(data_dir)
+    
+    if not os.path.exists(abs_data_dir):
+        print(f" ERROR: Data directory '{abs_data_dir}' not found.")
+        print(f"   Looking for: {abs_data_dir}")
         return []
 
-    pdf_files = [f for f in os.listdir(data_dir) if f.endswith(".pdf")]
+    pdf_files = [f for f in os.listdir(abs_data_dir) if f.endswith(".pdf")]
     if not pdf_files:
-        print(" WARNING: No PDF files found in the directory.")
+        print(f" WARNING: No PDF files found in directory: {abs_data_dir}")
         return []
 
-    loader = DirectoryLoader(data_dir, glob="*.pdf", loader_cls=PyPDFLoader)
+    loader = DirectoryLoader(abs_data_dir, glob="*.pdf", loader_cls=PyPDFLoader)
     documents = loader.load()
-    print(f" Loaded {len(documents)} documents from {data_dir}")
+    print(f"✅ Loaded {len(documents)} documents from {len(pdf_files)} PDF file(s)")
     return documents
 
 def create_chunks(extracted_data):
@@ -41,12 +58,20 @@ def create_chunks(extracted_data):
 
 def check_existing_faiss():
     """Checks if an existing FAISS database is available."""
-    if os.path.exists(DB_FAISS_PATH):
+    abs_db_path = get_absolute_path(DB_FAISS_PATH)
+    if os.path.exists(abs_db_path):
         print("🔍 FAISS vector store already exists. Overwriting...")
         return True
     return False
 
 def main():
+    print(" Creating FAISS Vector Store for AI Health Consultant")
+    print("=" * 60)
+    print(f" Project root: {project_root}")
+    print(f" Data path: {get_absolute_path(DATA_PATH)}")
+    print(f" FAISS path: {get_absolute_path(DB_FAISS_PATH)}")
+    print()
+    
     # 1. Load PDF documents
     documents = load_pdf_files(DATA_PATH)
     if not documents:
@@ -63,9 +88,14 @@ def main():
 
     # 4. Create FAISS vector store (overwrite if exists)
     check_existing_faiss()
+    abs_db_path = get_absolute_path(DB_FAISS_PATH)
+    
+    # Ensure directory exists
+    os.makedirs(os.path.dirname(abs_db_path), exist_ok=True)
+    
     db = FAISS.from_documents(text_chunks, embedding_model)
-    db.save_local(DB_FAISS_PATH)
-    print(" FAISS vector store created and saved successfully.")
+    db.save_local(abs_db_path)
+    print(f" FAISS vector store created and saved to: {abs_db_path}")
 
 if __name__ == "__main__":
     main()
