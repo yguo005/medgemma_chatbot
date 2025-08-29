@@ -3,9 +3,9 @@ import traceback
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.vectorstores import VectorStoreRetriever
-from app.config import DB_FAISS_PATH, EMBEDDING_MODEL
-from app.medgemma_service import MedGemmaService
-from app.medgemma_model_garden import MedGemmaModelGarden
+from config.settings import DB_FAISS_PATH, EMBEDDING_MODEL
+from src.services.ai.medgemma.medgemma_service import MedGemmaService
+from src.services.ai.medgemma.model_garden import MedGemmaModelGarden
 import logging
 
 logger = logging.getLogger(__name__)

@@ -4,29 +4,29 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from dotenv import load_dotenv
-from app.config import DATA_PATH, DB_FAISS_PATH, EMBEDDING_MODEL, CHUNK_SIZE, CHUNK_OVERLAP
+from config.settings import DATA_PATH, DB_FAISS_PATH, EMBEDDING_MODEL, CHUNK_SIZE, CHUNK_OVERLAP
 
 # Load environment variables
 load_dotenv()
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
 if not OPENAI_API_KEY:
-    raise ValueError("❌ ERROR: OpenAI API Key is missing! Set 'OPENAI_API_KEY' in your environment.")
+    raise ValueError(" ERROR: OpenAI API Key is missing! Set 'OPENAI_API_KEY' in your environment.")
 
 def load_pdf_files(data_dir: str):
     """Loads all PDF files in the specified directory using PyPDFLoader."""
     if not os.path.exists(data_dir):
-        print(f"❌ ERROR: Data directory '{data_dir}' not found.")
+        print(f" ERROR: Data directory '{data_dir}' not found.")
         return []
 
     pdf_files = [f for f in os.listdir(data_dir) if f.endswith(".pdf")]
     if not pdf_files:
-        print("⚠️ WARNING: No PDF files found in the directory.")
+        print(" WARNING: No PDF files found in the directory.")
         return []
 
     loader = DirectoryLoader(data_dir, glob="*.pdf", loader_cls=PyPDFLoader)
     documents = loader.load()
-    print(f"✅ Loaded {len(documents)} documents from {data_dir}")
+    print(f" Loaded {len(documents)} documents from {data_dir}")
     return documents
 
 def create_chunks(extracted_data):
@@ -36,7 +36,7 @@ def create_chunks(extracted_data):
         chunk_overlap=CHUNK_OVERLAP
     )
     text_chunks = text_splitter.split_documents(extracted_data)
-    print(f"✅ Created {len(text_chunks)} text chunks.")
+    print(f" Created {len(text_chunks)} text chunks.")
     return text_chunks
 
 def check_existing_faiss():
@@ -50,7 +50,7 @@ def main():
     # 1. Load PDF documents
     documents = load_pdf_files(DATA_PATH)
     if not documents:
-        print("❌ ERROR: No documents to process. Exiting...")
+        print(" ERROR: No documents to process. Exiting...")
         return
 
     # 2. Create text chunks
@@ -59,13 +59,13 @@ def main():
     # 3. Load embedding model
     embedding_model = OpenAIEmbeddings(model=EMBEDDING_MODEL, openai_api_key=OPENAI_API_KEY)
     test_vector = embedding_model.embed_query("Test query")  # Ensure embedding dimension matches FAISS
-    print(f"✅ OpenAI Embedding Model Loaded (Vector Dimension: {len(test_vector)})")
+    print(f" OpenAI Embedding Model Loaded (Vector Dimension: {len(test_vector)})")
 
     # 4. Create FAISS vector store (overwrite if exists)
     check_existing_faiss()
     db = FAISS.from_documents(text_chunks, embedding_model)
     db.save_local(DB_FAISS_PATH)
-    print("✅ FAISS vector store created and saved successfully.")
+    print(" FAISS vector store created and saved successfully.")
 
 if __name__ == "__main__":
     main()

@@ -12,14 +12,14 @@ load_dotenv()
 # Load OpenAI API Key
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 
-# ✅ Prevents conflict: Ensure FAISS uses the same embedding model
+#  Prevents conflict: Ensure FAISS uses the same embedding model
 DB_FAISS_PATH = "vectorstore/db_faiss"
 embedding_model = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
 
 try:
     vectorstore = FAISS.load_local(DB_FAISS_PATH, embedding_model, allow_dangerous_deserialization=True)
 except Exception as e:
-    print(f"❌ ERROR: Failed to load FAISS. Ensure it is correctly built. {str(e)}")
+    print(f" ERROR: Failed to load FAISS. Ensure it is correctly built. {str(e)}")
     exit()
 
 # Create retriever from FAISS vectorstore
@@ -39,7 +39,7 @@ prompt = ChatPromptTemplate.from_messages([
     ("human", "{input}"),
 ])
 
-# ✅ Prevents conflict: Ensure LLM is properly loaded
+#  Prevents conflict: Ensure LLM is properly loaded
 def load_llm():
     """Loads OpenAI GPT model for answering queries."""
     try:
@@ -50,21 +50,21 @@ def load_llm():
             openai_api_key=OPENAI_API_KEY
         )
     except Exception as e:
-        print(f"❌ ERROR: Failed to load OpenAI LLM. {str(e)}")
+        print(f" ERROR: Failed to load OpenAI LLM. {str(e)}")
         exit()
 
-# ✅ Prevents conflict: Avoid overwriting FAISS
+#  Prevents conflict: Avoid overwriting FAISS
 retrieval_chain = RunnableParallel(
     {"context": retriever, "input": RunnablePassthrough()}
 ) | prompt | load_llm()
 
-# ✅ Run Safely Without Overwriting FastAPI's FAISS
+#  Run Safely Without Overwriting FastAPI's FAISS
 try:
     user_query = input("Write your query here: ").strip()
     response = retrieval_chain.invoke({"input": user_query})
     print("\n--- Retrieval Q&A ---")
     print("RESULT:", response)
 except Exception as e:
-    print(f"❌ ERROR: Chatbot failed to respond. {str(e)}")
+    print(f" ERROR: Chatbot failed to respond. {str(e)}")
 
 

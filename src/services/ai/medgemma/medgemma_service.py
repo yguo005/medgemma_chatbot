@@ -24,7 +24,7 @@ class MedGemmaService:
     
     def __init__(
         self, 
-        model_name: str = "google/medgemma-7b", 
+        model_name: str = "google/medgemma-4b-it",  # Fixed: Use 4B instruction-tuned variant
         device: str = "auto",
         use_quantization: bool = False,
         multimodal: bool = False
@@ -128,6 +128,9 @@ class MedGemmaService:
             
             self.pipeline = pipeline(self.task, **pipeline_kwargs)
             
+            # Configure generation settings to match official implementation
+            self.pipeline.model.generation_config.do_sample = False
+            
             logger.info("✅ MedGemma model loaded successfully")
             
         except Exception as e:
@@ -221,23 +224,23 @@ Important guidelines:
     
     def _generate_text(self, prompt: str, max_length: int, temperature: float) -> list:
         """Generate text using the pipeline (runs in thread pool)"""
+        # Use official MedGemma generation parameters
         return self.pipeline(
             prompt,
-            max_length=max_length,
-            temperature=temperature,
-            do_sample=True,
+            max_new_tokens=300,  # Official notebook uses max_new_tokens instead of max_length
+            do_sample=False,     # Official implementation uses deterministic generation
             pad_token_id=self.tokenizer.eos_token_id,
             num_return_sequences=1,
-            return_full_text=True
+            return_full_text=False  # Return only generated text, not full input
         )
     
     def _generate_multimodal_response(self, inputs: Dict[str, Any], max_length: int, temperature: float) -> Dict[str, Any]:
         """Generate multimodal response using the image-text-to-text pipeline (runs in thread pool)"""
+        # Use official MedGemma generation parameters for multimodal
         return self.pipeline(
             inputs,
-            max_length=max_length,
-            temperature=temperature,
-            do_sample=True,
+            max_new_tokens=300,  # Official notebook uses max_new_tokens
+            do_sample=False,     # Official implementation uses deterministic generation
             pad_token_id=self.tokenizer.eos_token_id,
             num_return_sequences=1
         )

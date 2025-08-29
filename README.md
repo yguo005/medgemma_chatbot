@@ -1,2 +1,0 @@
-# AI_Doctor-main
- 

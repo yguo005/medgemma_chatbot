@@ -29,7 +29,7 @@ class AIServices:
                 if not gcp_project_id:
                     raise ValueError("GCP_PROJECT_ID is required for Model Garden")
                 
-                from app.medgemma_model_garden import MedGemmaModelGarden
+                from src.services.ai.medgemma.medgemma_model_garden import MedGemmaModelGarden
                 self.medgemma_service = MedGemmaModelGarden(
                     project_id=gcp_project_id,
                     credentials_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
