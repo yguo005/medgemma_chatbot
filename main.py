@@ -45,14 +45,14 @@ try:
     )
     
     if USE_MEDGEMMA_GARDEN:
-        logger.info(f"🧠 MedGemma 4B Model Garden integration enabled (Project: {GCP_PROJECT_ID})")
+        logger.info(f" MedGemma 4B Model Garden integration enabled (Project: {GCP_PROJECT_ID})")
     else:
-        logger.info("🤖 Using MedGemma 4B local + RAG architecture")
+        logger.info(" Using MedGemma 4B local + RAG architecture")
     
-    logger.info("✅ All services initialized successfully with safety guardrails.")
+    logger.info(" All services initialized successfully with safety guardrails.")
     
 except Exception as e:
-    logger.error(f"❌ Failed to initialize services: {e}")
+    logger.error(f" Failed to initialize services: {e}")
     chatbot = None
     conversation_manager = None
     ai_services = None
@@ -96,14 +96,14 @@ async def chat(query_request: QueryRequest):
         session_id = query_request.session_id
         is_choice = query_request.is_choice
 
-        logger.info(f"💬 Session {session_id}: {query_text}")
+        logger.info(f" Session {session_id}: {query_text}")
 
         # Step 1: Safety check on user input
         safety_result = safety_guardrails.process_user_input(query_text)
         
         # Handle emergency situations
         if safety_result["should_block"]:
-            logger.warning(f"🚨 Session {session_id}: Emergency situation detected")
+            logger.warning(f" Session {session_id}: Emergency situation detected")
             return {
                 "response_type": "emergency",
                 "response": safety_result["emergency_response"],
@@ -150,12 +150,12 @@ async def chat(query_request: QueryRequest):
                     """
                     response['enhanced_with'] = 'Safety Fallback'
                     response['safety_validated'] = False
-                    logger.warning(f"⚠️ Session {session_id}: AI response failed safety validation")
+                    logger.warning(f" Session {session_id}: AI response failed safety validation")
                 
-                logger.info(f"✅ Session {session_id}: Enhanced with {response['enhanced_with']}")
+                logger.info(f" Session {session_id}: Enhanced with {response['enhanced_with']}")
                 
             except Exception as enhancement_error:
-                logger.error(f"❌ Enhancement failed: {enhancement_error}")
+                logger.error(f" Enhancement failed: {enhancement_error}")
                 # Fallback to safe default response
                 response['diagnosis_description'] = """
                 I recommend consulting with a healthcare professional about your symptoms. 
@@ -170,13 +170,13 @@ async def chat(query_request: QueryRequest):
             final_safety_check = safety_guardrails.validate_response(response['diagnosis_description'])
             if not final_safety_check["is_safe"]:
                 response['diagnosis_description'] = final_safety_check["filtered_response"]
-                logger.warning(f"⚠️ Session {session_id}: Final response required safety filtering")
+                logger.warning(f" Session {session_id}: Final response required safety filtering")
 
-        logger.info(f"📤 Session {session_id}: Response sent successfully")
+        logger.info(f" Session {session_id}: Response sent successfully")
         return response
 
     except Exception as e:
-        error_message = f"❌ Internal Server Error: {str(e)}\n{traceback.format_exc()}"
+        error_message = f" Internal Server Error: {str(e)}\n{traceback.format_exc()}"
         logger.error(error_message)
         raise HTTPException(status_code=500, detail="An internal error occurred.")
 
@@ -191,7 +191,7 @@ async def analyze_image(request: ImageAnalysisRequest):
         image_data = request.image_data
         filename = request.filename
 
-        logger.info(f"📷 Session {session_id}: Analyzing image {filename}")
+        logger.info(f" Session {session_id}: Analyzing image {filename}")
 
         # Analyze image using GPT-4 Vision
         analysis_result = await ai_services.analyze_image(image_data, context="medical")
@@ -214,18 +214,18 @@ async def analyze_image(request: ImageAnalysisRequest):
             safety_validation = safety_guardrails.validate_response(analysis_text)
             final_analysis = safety_validation["filtered_response"]
             
-            logger.info(f"✅ Session {session_id}: Image analysis successful and validated")
+            logger.info(f" Session {session_id}: Image analysis successful and validated")
         else:
             final_analysis = analysis_result["analysis"]  # Fallback message
-            logger.warning(f"⚠️ Session {session_id}: Image analysis failed - {analysis_result.get('error', 'Unknown error')}")
+            logger.warning(f" Session {session_id}: Image analysis failed - {analysis_result.get('error', 'Unknown error')}")
         
         response = conversation_manager.process_image_analysis(session_id, final_analysis)
         
-        logger.info(f"📤 Session {session_id}: Image analysis response sent")
+        logger.info(f" Session {session_id}: Image analysis response sent")
         return response
 
     except Exception as e:
-        error_message = f"❌ Image Analysis Error: {str(e)}\n{traceback.format_exc()}"
+        error_message = f" Image Analysis Error: {str(e)}\n{traceback.format_exc()}"
         logger.error(error_message)
         try:
             fallback_response = conversation_manager.process_image_analysis(
@@ -261,10 +261,10 @@ async def transcribe_audio(session_id: str = Form(...), audio: UploadFile = File
                     "session_id": session_id
                 }
             
-            logger.info(f"✅ Session {session_id}: Audio transcription successful and validated")
+            logger.info(f" Session {session_id}: Audio transcription successful and validated")
         else:
             transcription_text = transcription_result["transcription"]
-            logger.warning(f"⚠️ Session {session_id}: Audio transcription failed")
+            logger.warning(f" Session {session_id}: Audio transcription failed")
         
         response = conversation_manager.process_voice_transcription(session_id, transcription_text)
         
@@ -272,7 +272,7 @@ async def transcribe_audio(session_id: str = Form(...), audio: UploadFile = File
         return response
 
     except Exception as e:
-        error_message = f"❌ Transcription Error: {str(e)}\n{traceback.format_exc()}"
+        error_message = f" Transcription Error: {str(e)}\n{traceback.format_exc()}"
         logger.error(error_message)
         try:
             fallback_response = conversation_manager.process_voice_transcription(

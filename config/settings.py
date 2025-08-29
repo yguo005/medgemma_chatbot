@@ -96,7 +96,7 @@ if DEPLOYMENT_MODE == "production":
     
     # Prefer Model Garden in production
     if not USE_MEDGEMMA_GARDEN and GCP_PROJECT_ID:
-        print("⚠️ WARNING: Production mode detected but Model Garden not enabled. Consider using Model Garden for production.")
+        print(" WARNING: Production mode detected but Model Garden not enabled. Consider using Model Garden for production.")
         
 elif DEPLOYMENT_MODE == "development":
     # Development settings
@@ -107,7 +107,7 @@ elif DEPLOYMENT_MODE == "development":
     
     # Local MedGemma is fine for development
     if USE_MEDGEMMA_GARDEN:
-        print("ℹ️ INFO: Using Model Garden in development mode.")
+        print(" INFO: Using Model Garden in development mode.")
 
 # ==========================================
 # Feature Flags
@@ -188,7 +188,7 @@ def get_active_config() -> dict:
 # Print configuration status on import (only in development)
 if DEPLOYMENT_MODE == "development":
     validation = validate_configuration()
-    print(f"\n🔧 Configuration Status:")
+    print(f"\n Configuration Status:")
     print(f"   Mode: {DEPLOYMENT_MODE}")
     print(f"   MedGemma: {'Model Garden' if USE_MEDGEMMA_GARDEN else 'Local HF'}")
     print(f"   Valid: {validation['valid']}")
