@@ -3,7 +3,6 @@ import os
 import sys
 import asyncio
 from pyngrok import ngrok, conf
-from huggingface_hub import login
 
 # Validate environment variables
 NGROK_TOKEN = os.environ.get("NGROK_AUTHTOKEN")
@@ -19,10 +18,6 @@ if not OPENAI_KEY:
     print("Set it with: os.environ['OPENAI_API_KEY'] = 'your-key-here'")
     sys.exit(1)
 
-# --- 2. THE CRITICAL STEP: Log in to Hugging Face ---
-# This uses the HF_TOKEN secret to authenticate your session
-HF_TOKEN = userdata.get('HF_TOKEN')
-login(token=HF_TOKEN)
 
 
 # Set the ngrok auth token
