@@ -1,12 +1,31 @@
 import os
 import logging
-from typing import Dict, Any, Optional, Union
+from typing import Dict, Any, Optional, Union, List
 import torch
 from transformers import (
     AutoTokenizer, 
     AutoModelForCausalLM, 
-    BitsAndBytesConfig
+    BitsAndBytesConfig,
+    AutoProcessor  # Added for multimodal support
 )
+
+# Import PIL for image handling
+try:
+    from PIL import Image
+    PIL_AVAILABLE = True
+except ImportError:
+    Image = None
+    PIL_AVAILABLE = False
+    logging.warning(" PIL not available. Image processing features will be limited.")
+
+# Import requests for URL image loading
+try:
+    import requests
+    REQUESTS_AVAILABLE = True
+except ImportError:
+    requests = None
+    REQUESTS_AVAILABLE = False
+    logging.warning(" requests not available. URL image loading will be disabled.")
 
 # Try to import pipeline (may be missing in corrupted installations)
 try:
@@ -15,7 +34,7 @@ try:
 except ImportError:
     pipeline = None
     PIPELINE_AVAILABLE = False
-    logging.warning("⚠️ transformers.pipeline not available. MedGemma service will be disabled.")
+    logging.warning(" transformers.pipeline not available. MedGemma service will be disabled.")
 
 # Try to import AutoModelForImageTextToText (available in transformers >= 4.42.0)
 try:
@@ -60,7 +79,7 @@ class MedGemmaService:
         self.use_quantization = use_quantization
         self.multimodal = multimodal
         self.model = None
-        self.tokenizer = None
+        self.processor_or_tokenizer = None  # Use unified attribute for processor/tokenizer
         self.pipeline = None
         self.executor = ThreadPoolExecutor(max_workers=2)  # For async operations
         
@@ -76,7 +95,7 @@ class MedGemmaService:
         
         # Check if pipeline is available
         if not PIPELINE_AVAILABLE:
-            logger.error("❌ transformers.pipeline not available. MedGemma service disabled.")
+            logger.error(" transformers.pipeline not available. MedGemma service disabled.")
             self.model = None
             self.tokenizer = None
             self.pipeline = None
@@ -90,7 +109,7 @@ class MedGemmaService:
         if device == "auto":
             if torch.cuda.is_available():
                 return "cuda"
-            elif torch.backends.mps.is_available():  # Apple Silicon
+            elif torch.backends.mps.is_available():  
                 return "mps"
             else:
                 return "cpu"
@@ -104,11 +123,19 @@ class MedGemmaService:
             logger.info(f" Quantization: {'Enabled' if self.use_quantization else 'Disabled'}")
             logger.info(f" Multimodal: {'Enabled' if self.multimodal else 'Disabled'}")
             
-            # Load tokenizer
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.model_name,
-                trust_remote_code=True
-            )
+            # Load processor for multimodal or tokenizer for text-only
+            if self.multimodal and MULTIMODAL_AVAILABLE:
+                logger.info(" Loading AutoProcessor for multimodal support...")
+                self.processor_or_tokenizer = AutoProcessor.from_pretrained(
+                    self.model_name,
+                    trust_remote_code=True
+                )
+            else:
+                logger.info(" Loading AutoTokenizer for text-only support...")
+                self.processor_or_tokenizer = AutoTokenizer.from_pretrained(
+                    self.model_name,
+                    trust_remote_code=True
+                )
             
             # Configure model loading parameters
             model_kwargs = {
@@ -149,7 +176,7 @@ class MedGemmaService:
             # Create pipeline for easier inference
             pipeline_kwargs = {
                 "model": self.model,
-                "tokenizer": self.tokenizer,
+                "tokenizer": self.processor_or_tokenizer,  # Use unified processor/tokenizer
             }
             
             if not self.use_quantization:
@@ -167,7 +194,7 @@ class MedGemmaService:
         except Exception as e:
             logger.error(f" Failed to load MedGemma model: {e}")
             self.model = None
-            self.tokenizer = None
+            self.processor_or_tokenizer = None
             self.pipeline = None
     
     async def generate_medical_response(
@@ -197,31 +224,29 @@ class MedGemmaService:
             }
         
         try:
-            # Construct the medical prompt
-            prompt = self._construct_medical_prompt(query, context)
+            # Construct chat messages using modern chat template format
+            messages = self._construct_chat_messages(query, context)
             
             # Run inference in thread pool to avoid blocking
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 self.executor,
-                self._generate_text,
-                prompt,
-                max_length,
-                temperature
+                self._generate_with_chat_template,
+                messages,
+                max_length
             )
             
-            # Extract and clean the response
-            generated_text = result[0]['generated_text']
-            response = self._extract_response(generated_text, prompt)
+            # Extract the response from chat template output
+            response = result[0]["generated_text"][-1]["content"]
             
-            logger.info("✅ MedGemma response generated successfully")
+            logger.info(" MedGemma response generated successfully")
             
             return {
                 "success": True,
                 "response": response,
                 "model_used": self.model_name,
                 "device": self.device,
-                "prompt_length": len(prompt),
+                "prompt_length": len(str(messages)),  # Approximate length of messages
                 "response_length": len(response)
             }
             
@@ -233,8 +258,32 @@ class MedGemmaService:
                 "error": str(e)
             }
     
+    def _construct_chat_messages(self, query: str, context: str = "") -> List[Dict[str, Any]]:
+        """Construct structured message list for chat template (NEW METHOD)"""
+        system_instruction = "You are a helpful medical assistant. Provide informative but not diagnostic advice, and always recommend consulting a healthcare professional."
+        
+        user_content = []
+        if context:
+            user_content.append({"type": "text", "text": f"Context: {context}\n\nQuestion: {query}"})
+        else:
+            user_content.append({"type": "text", "text": query})
+
+        return [
+            {"role": "system", "content": [{"type": "text", "text": system_instruction}]},
+            {"role": "user", "content": user_content}
+        ]
+
+    def _generate_with_chat_template(self, messages: List[Dict[str, Any]], max_length: int) -> list:
+        """Generate text using chat template with pipeline (NEW METHOD)"""
+        return self.pipeline(
+            messages,
+            max_new_tokens=max_length,
+            do_sample=False,
+            pad_token_id=self.processor_or_tokenizer.eos_token_id,
+        )
+
     def _construct_medical_prompt(self, query: str, context: str = "") -> str:
-        """Construct a proper medical prompt for MedGemma"""
+        """Construct a proper medical prompt for MedGemma (LEGACY METHOD - kept for fallback)"""
         
         # MedGemma-specific prompt format
         system_prompt = """You are a medical AI assistant. Provide helpful, accurate medical information while always emphasizing the importance of consulting healthcare professionals for proper diagnosis and treatment.
@@ -254,13 +303,13 @@ Important guidelines:
         return prompt
     
     def _generate_text(self, prompt: str, max_length: int, temperature: float) -> list:
-        """Generate text using the pipeline (runs in thread pool)"""
+        """Generate text using the pipeline (LEGACY METHOD - kept for fallback)"""
         # Use official MedGemma generation parameters
         return self.pipeline(
             prompt,
             max_new_tokens=300,  # Official notebook uses max_new_tokens instead of max_length
             do_sample=False,     # Official implementation uses deterministic generation
-            pad_token_id=self.tokenizer.eos_token_id,
+            pad_token_id=self.processor_or_tokenizer.eos_token_id,
             num_return_sequences=1,
             return_full_text=False  # Return only generated text, not full input
         )
@@ -272,10 +321,33 @@ Important guidelines:
             inputs,
             max_new_tokens=300,  # Official notebook uses max_new_tokens
             do_sample=False,     # Official implementation uses deterministic generation
-            pad_token_id=self.tokenizer.eos_token_id,
+            pad_token_id=self.processor_or_tokenizer.eos_token_id,  # Updated to use processor_or_tokenizer
             num_return_sequences=1
         )
     
+    def _construct_multimodal_chat_messages(self, text_prompt: str, image: Any) -> List[Dict[str, Any]]:
+        """Construct structured message list for multimodal chat template (NEW METHOD)"""
+        system_instruction = "You are a medical AI assistant analyzing medical images. Provide helpful, accurate medical observations while always emphasizing the importance of consulting healthcare professionals for proper diagnosis and treatment."
+        
+        user_content = [
+            {"type": "image", "image": image},
+            {"type": "text", "text": text_prompt}
+        ]
+
+        return [
+            {"role": "system", "content": [{"type": "text", "text": system_instruction}]},
+            {"role": "user", "content": user_content}
+        ]
+    
+    def _generate_multimodal_with_chat_template(self, messages: List[Dict[str, Any]], max_length: int) -> list:
+        """Generate multimodal text using chat template with pipeline (NEW METHOD)"""
+        return self.pipeline(
+            messages,
+            max_new_tokens=max_length,
+            do_sample=False,
+            pad_token_id=self.processor_or_tokenizer.eos_token_id,
+        )
+
     def _construct_multimodal_prompt(self, text_prompt: str) -> str:
         """Construct a proper multimodal medical prompt for MedGemma"""
         
@@ -405,27 +477,42 @@ Important guidelines:
             }
         
         try:
-            # Construct the multimodal prompt
-            prompt = self._construct_multimodal_prompt(text_prompt)
+            # Check if required dependencies are available
+            if not PIL_AVAILABLE:
+                return {
+                    "success": False,
+                    "response": "PIL (Pillow) is required for image processing. Please install with: pip install Pillow",
+                    "error": "PIL not available"
+                }
             
-            # Prepare inputs for multimodal pipeline
-            inputs = {
-                "text": prompt,
-                "images": image_path
-            }
+            # Load image using PIL (following official notebook best practices)
+            if image_path.startswith(('http://', 'https://')):
+                if not REQUESTS_AVAILABLE:
+                    return {
+                        "success": False,
+                        "response": "requests library is required for URL image loading. Please install with: pip install requests",
+                        "error": "requests not available"
+                    }
+                from io import BytesIO
+                response = requests.get(image_path)
+                image = Image.open(BytesIO(response.content))
+            else:
+                image = Image.open(image_path)
+            
+            # Construct multimodal chat messages using new chat template format
+            messages = self._construct_multimodal_chat_messages(text_prompt, image)
             
             # Run inference in thread pool to avoid blocking
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 self.executor,
-                self._generate_multimodal_response,
-                inputs,
-                max_length,
-                temperature
+                self._generate_multimodal_with_chat_template,
+                messages,
+                max_length
             )
             
-            # Extract and clean the response
-            response = self._extract_multimodal_response(result)
+            # Extract the response from chat template output
+            response = result[0]["generated_text"][-1]["content"]
             
             logger.info(" MedGemma multimodal response generated successfully")
             

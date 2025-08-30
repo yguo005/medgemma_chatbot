@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 class MedGemmaModelGarden:
     """
     MedGemma 4B service using Google Cloud Model Garden,
-    aligned with project requirements for using MedGemma 4B specifically.
+    using MedGemma 4B specifically.
     """
     
     def __init__(
@@ -42,7 +42,8 @@ class MedGemmaModelGarden:
         self.endpoint = None
         self.openai_client = None
         
-        # Using MedGemma 4B instruction-tuned as specified in project requirements
+        
+        # Note: This is for reference only - the actual model is determined by the endpoint
         self.model_name = "google/medgemma-4b-it"
         
         self._initialize_client()
@@ -50,32 +51,45 @@ class MedGemmaModelGarden:
     def _initialize_client(self):
         """Initialize clients for Vertex AI and OpenAI SDK"""
         try:
-            creds, _ = google.auth.default()
+            # Load credentials - prefer service account file if provided
             if self.credentials_path and os.path.exists(self.credentials_path):
                 creds = service_account.Credentials.from_service_account_file(
-                    self.credentials_path, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+                    self.credentials_path,
+                    scopes=['https://www.googleapis.com/auth/cloud-platform']
                 )
+                logger.info(f" Using service account credentials from: {self.credentials_path}")
+            else:
+                creds, _ = google.auth.default()
+                logger.info(" Using default Google Cloud credentials")
             
+            # Initialize Vertex AI
             aiplatform.init(
                 project=self.project_id,
                 location=self.location,
                 credentials=creds
             )
-            
-            self.endpoint = aiplatform.Endpoint(self.endpoint_id)
-            logger.info(f"✅ MedGemma 4B Vertex AI Endpoint loaded: {self.endpoint.display_name}")
 
             # Set up OpenAI-compatible client
             auth_req = google.auth.transport.requests.Request()
             creds.refresh(auth_req)
 
-            base_url = f"https://{self.location}-aiplatform.googleapis.com/v1beta1/{self.endpoint.resource_name}"
+            # --- IMPROVEMENT: Use robust URL construction from official notebook ---
+            # Check for dedicated endpoint (default for Model Garden deployments)
+            try:
+                # Try to get the dedicated endpoint DNS - this is the primary method for Model Garden
+                dedicated_endpoint_dns = self.endpoint.gca_resource.dedicated_endpoint_dns
+                base_url = f"https://{dedicated_endpoint_dns}/v1beta1/{self.endpoint.resource_name}"
+                logger.info(f"🎯 Using dedicated endpoint DNS: {dedicated_endpoint_dns}")
+            except AttributeError:
+                # Fallback to standard regional URL for non-dedicated endpoints
+                base_url = f"https://{self.location}-aiplatform.googleapis.com/v1beta1/{self.endpoint.resource_name}"
+                logger.info("📍 Using standard regional endpoint URL (non-dedicated)")
             
             self.openai_client = openai.OpenAI(base_url=base_url, api_key=creds.token)
-            logger.info("✅ OpenAI-compatible client for MedGemma 4B initialized")
+            logger.info(" OpenAI-compatible client for MedGemma 4B initialized")
 
         except Exception as e:
-            logger.error(f"❌ Failed to initialize MedGemma 4B Model Garden client: {e}")
+            logger.error(f" Failed to initialize MedGemma 4B Model Garden client: {e}")
             self.endpoint = None
             self.openai_client = None
 
@@ -100,7 +114,7 @@ class MedGemmaModelGarden:
             model_response = await loop.run_in_executor(
                 None,
                 lambda: self.openai_client.chat.completions.create(
-                    model=self.model_name,
+                    model="",  # Empty model name - the model is determined by the endpoint
                     messages=messages,
                     max_tokens=max_tokens,
                     temperature=temperature,
@@ -108,7 +122,7 @@ class MedGemmaModelGarden:
             )
             response_text = model_response.choices[0].message.content
             
-            logger.info("✅ MedGemma 4B response generated successfully")
+            logger.info(" MedGemma 4B response generated successfully")
             
             return {
                 "success": True,
@@ -117,7 +131,7 @@ class MedGemmaModelGarden:
                 "model_version": "4B"
             }
         except Exception as e:
-            logger.error(f"❌ MedGemma 4B generation failed: {e}")
+            logger.error(f" MedGemma 4B generation failed: {e}")
             return {
                 "success": False,
                 "response": "I apologize, but I'm having trouble processing your query right now.",
@@ -192,7 +206,7 @@ Key guidelines:
                 "model_version": "4B"
             }
         except Exception as e:
-            logger.error(f"❌ MedGemma 4B health check failed: {e}")
+            logger.error(f" MedGemma 4B health check failed: {e}")
             return {
                 "medgemma_4b_available": False,
                 "endpoint_accessible": False,

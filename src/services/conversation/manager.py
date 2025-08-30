@@ -257,7 +257,7 @@ class ConversationManager:
         elif any(keyword in message.lower() for keyword in ['emergency', 'urgent', 'severe', 'call 911']):
             return {
                 "response_type": "text",
-                "response": "🚨 If this is a medical emergency, please call 911 or go to your nearest emergency room immediately. For urgent but non-emergency concerns, consider visiting an urgent care center or contacting your primary care physician."
+                "response": " If this is a medical emergency, please call 911 or go to your nearest emergency room immediately. For urgent but non-emergency concerns, consider visiting an urgent care center or contacting your primary care physician."
             }
         else:
             return {

@@ -10,8 +10,11 @@ from fastapi.staticfiles import StaticFiles
 # Import modules from new structure
 from src.services.ai.rag.chatbot import Chatbot
 from src.services.conversation.manager import ConversationManager
-from app.openai_services import AIServices
+from services.ai.openai_services import AIServices
 from src.services.safety.safety_guardrails import MedicalSafetyGuardrails
+
+# Import optimized AI service manager
+from src.services.ai.ai_service_manager import create_ai_service_manager
 
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -22,6 +25,9 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 USE_MEDGEMMA_GARDEN = os.getenv("USE_MEDGEMMA_GARDEN", "false").lower() == "true"
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID")
 MEDGEMMA_ENDPOINT_ID = os.getenv("MEDGEMMA_ENDPOINT_ID")
+
+# New: AI Service Manager configuration
+AI_SERVICE_MODE = os.getenv("AI_SERVICE_MODE", "hybrid")  # hybrid, local_demo, cloud_first
 
 # Initialize safety guardrails first
 safety_guardrails = MedicalSafetyGuardrails()
@@ -44,6 +50,9 @@ try:
         gcp_project_id=GCP_PROJECT_ID
     )
     
+    # Initialize optimized AI service manager (new approach)
+    ai_service_manager = create_ai_service_manager(AI_SERVICE_MODE)
+    
     if USE_MEDGEMMA_GARDEN:
         logger.info(f" MedGemma 4B Model Garden integration enabled (Project: {GCP_PROJECT_ID})")
     else:
@@ -56,6 +65,7 @@ except Exception as e:
     chatbot = None
     conversation_manager = None
     ai_services = None
+    ai_service_manager = None
 
 app = FastAPI(
     title="AI Health Consultant API", 
@@ -182,8 +192,8 @@ async def chat(query_request: QueryRequest):
 
 @app.post("/analyze_image")
 async def analyze_image(request: ImageAnalysisRequest):
-    """Enhanced image analysis with safety guardrails."""
-    if not conversation_manager or not ai_services or not safety_guardrails:
+    """Enhanced image analysis with safety guardrails using optimized service manager."""
+    if not conversation_manager or not safety_guardrails:
         raise HTTPException(status_code=500, detail="Required services not initialized.")
 
     try:
@@ -193,8 +203,15 @@ async def analyze_image(request: ImageAnalysisRequest):
 
         logger.info(f" Session {session_id}: Analyzing image {filename}")
 
-        # Analyze image using GPT-4 Vision
-        analysis_result = await ai_services.analyze_image(image_data, context="medical")
+        # Use optimized service manager for image analysis (tries MedGemma first, then OpenAI)
+        if ai_service_manager:
+            analysis_result = await ai_service_manager.analyze_image(image_data, context="medical")
+            service_used = analysis_result.get("service_used", "unknown")
+            logger.info(f" Image analysis service used: {service_used}")
+        else:
+            # Fallback to old openai_services if ai_service_manager failed to initialize
+            logger.warning(" Using fallback openai_services for image analysis")
+            analysis_result = await ai_services.analyze_image(image_data, context="medical")
         
         if analysis_result["success"]:
             analysis_text = analysis_result["analysis"]
@@ -238,15 +255,22 @@ async def analyze_image(request: ImageAnalysisRequest):
 
 @app.post("/transcribe")
 async def transcribe_audio(session_id: str = Form(...), audio: UploadFile = File(...)):
-    """Enhanced audio transcription with safety guardrails."""
-    if not conversation_manager or not ai_services or not safety_guardrails:
+    """Enhanced audio transcription with safety guardrails using optimized service manager."""
+    if not conversation_manager or not safety_guardrails:
         raise HTTPException(status_code=500, detail="Required services not initialized.")
 
     try:
-        logger.info(f"🎤 Session {session_id}: Transcribing audio file: {audio.filename}")
+        logger.info(f" Session {session_id}: Transcribing audio file: {audio.filename}")
 
         audio_content = await audio.read()
-        transcription_result = await ai_services.transcribe_audio(audio_content, audio.filename or "audio.wav")
+        
+        # Use optimized service manager for audio transcription (OpenAI Whisper only)
+        if ai_service_manager:
+            transcription_result = await ai_service_manager.transcribe_audio(audio_content, audio.filename or "audio.wav")
+        else:
+            # Fallback to old ai_services if ai_service_manager failed to initialize
+            logger.warning(" Using fallback openai_services for audio transcription")
+            transcription_result = await ai_services.transcribe_audio(audio_content, audio.filename or "audio.wav")
         
         if transcription_result["success"]:
             transcription_text = transcription_result["transcription"]
@@ -285,16 +309,28 @@ async def transcribe_audio(session_id: str = Form(...), audio: UploadFile = File
 
 @app.get("/health")
 async def health_check():
-    """Enhanced health check including safety systems."""
+    """Enhanced health check including safety systems and optimized service manager."""
     status = {
         "api_status": "healthy",
         "chatbot_initialized": chatbot is not None,
         "conversation_manager_initialized": conversation_manager is not None,
         "ai_services_initialized": ai_services is not None,
+        "ai_service_manager_initialized": ai_service_manager is not None,
         "safety_guardrails_initialized": safety_guardrails is not None,
         "medgemma_garden_enabled": USE_MEDGEMMA_GARDEN,
-        "architecture": "MedGemma + RAG + Safety Guardrails"
+        "ai_service_mode": AI_SERVICE_MODE,
+        "architecture": "MedGemma + RAG + Safety Guardrails + Optimized Service Manager"
     }
+    
+    # Add detailed service manager status if available
+    if ai_service_manager:
+        service_status = ai_service_manager.get_service_status()
+        status.update({
+            "service_manager_details": service_status,
+            "image_analysis_available": service_status["image_analysis_available"],
+            "audio_transcription_available": service_status["audio_transcription_available"],
+            "text_generation_available": service_status["text_generation_available"]
+        })
     
     if ai_services:
         status.update(ai_services.get_service_status())

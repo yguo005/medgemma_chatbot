@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 class Chatbot:
     def __init__(self, openai_api_key: str, use_medgemma_garden: bool = False, gcp_project_id: str = None, endpoint_id: str = None):
         if not openai_api_key:
-            raise ValueError("❌ ERROR: OpenAI API Key is missing!")
+            raise ValueError(" ERROR: OpenAI API Key is missing!")
         
         self.openai_api_key = openai_api_key
         self.use_medgemma_garden = use_medgemma_garden
@@ -39,10 +39,10 @@ class Chatbot:
             if index.d != len(test_vector):
                 raise ValueError("FAISS index dimension mismatch.")
 
-            logger.info("✅ FAISS vector store loaded successfully")
+            logger.info(" FAISS vector store loaded successfully")
             return vectorstore
         except Exception as e:
-            logger.error(f"❌ Failed to load FAISS vector store: {e}")
+            logger.error(f" Failed to load FAISS vector store: {e}")
             return None
 
     def _initialize_medgemma_service(self, gcp_project_id: str = None, endpoint_id: str = None):
@@ -55,7 +55,7 @@ class Chatbot:
                     endpoint_id=endpoint_id or os.getenv("MEDGEMMA_ENDPOINT_ID", ""),
                     credentials_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
                 )
-                logger.info("✅ MedGemma Model Garden service initialized")
+                logger.info(" MedGemma Model Garden service initialized")
             else:
                 # Use local Hugging Face (development)
                 service = MedGemmaService(
@@ -64,11 +64,11 @@ class Chatbot:
                     use_quantization=True,
                     multimodal=True  # Enable multimodal capabilities
                 )
-                logger.info("✅ MedGemma local service initialized")
+                logger.info(" MedGemma local service initialized")
             
             return service
         except Exception as e:
-            logger.error(f"❌ Failed to initialize MedGemma service: {e}")
+            logger.error(f" Failed to initialize MedGemma service: {e}")
             return None
 
     def _create_retriever(self):
@@ -115,7 +115,7 @@ class Chatbot:
                     return "I apologize, but I'm having trouble processing your medical query right now."
                     
         except Exception as e:
-            logger.error(f"❌ Error in get_response: {e}\n{traceback.format_exc()}")
+            logger.error(f" Error in get_response: {e}\n{traceback.format_exc()}")
             return "Sorry, I encountered an error while processing your query."
 
     def get_service_info(self) -> dict:

@@ -25,6 +25,26 @@ USE_MEDGEMMA_GARDEN = os.getenv("USE_MEDGEMMA_GARDEN", "false").lower() == "true
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID")
 MEDGEMMA_ENDPOINT_ID = os.getenv("MEDGEMMA_ENDPOINT_ID")
 
+# ==========================================
+# AI Service Manager Configuration
+# ==========================================
+
+# Service mode configuration (NEW)
+AI_SERVICE_MODE = os.getenv("AI_SERVICE_MODE", "hybrid")  # hybrid, local_demo, cloud_first
+
+# Service manager configuration
+AI_SERVICE_MANAGER_CONFIG = {
+    "mode": AI_SERVICE_MODE,
+    "enable_local_medgemma": True,
+    "enable_cloud_medgemma": USE_MEDGEMMA_GARDEN,
+    "enable_openai_fallback": True,
+    "service_priority": {
+        "text_generation": ["medgemma_local", "medgemma_cloud", "openai"],
+        "image_analysis": ["medgemma_local", "medgemma_cloud", "openai_vision"],
+        "audio_transcription": ["openai_whisper"]  # Only option available
+    }
+}
+
 # Model Garden Configuration (Production)
 MEDGEMMA_MODEL_GARDEN_CONFIG = {
     "project_id": GCP_PROJECT_ID,
@@ -36,10 +56,10 @@ MEDGEMMA_MODEL_GARDEN_CONFIG = {
 
 # Local MedGemma Configuration (Development)
 MEDGEMMA_LOCAL_CONFIG = {
-    "model_name": "google/medgemma-4b",  
+    "model_name": "google/medgemma-4b-it",  # Updated to use instruction-tuned variant
     "device": "auto",
     "use_quantization": True,  # Memory efficiency
-    "multimodal": False,  # Enable if needed
+    "multimodal": True,  # Enable for image processing with ai_service_manager
     "max_length": 512,
     "temperature": 0.3  # Conservative for medical responses
 }
@@ -116,7 +136,7 @@ elif DEPLOYMENT_MODE == "development":
 FEATURE_FLAGS = {
     "enable_image_analysis": True,
     "enable_voice_transcription": True,
-    "enable_multimodal_medgemma": False,  # Enable when multimodal is needed
+    "enable_multimodal_medgemma": True,  # Enable for ai_service_manager
     "enable_conversation_memory": True,
     "enable_appointment_booking": True,  # Future feature
     "enable_medication_suggestions": False,  # Requires additional safety measures
@@ -135,12 +155,20 @@ def validate_configuration() -> dict:
     if not OPENAI_CONFIG["api_key"]:
         issues.append("Missing OpenAI API key")
     
+    # Check AI Service Manager mode
+    if AI_SERVICE_MODE not in ["local_demo", "hybrid", "cloud_first"]:
+        issues.append(f"Invalid AI_SERVICE_MODE: {AI_SERVICE_MODE}")
+    
     # Check MedGemma configuration
     if USE_MEDGEMMA_GARDEN:
         if not GCP_PROJECT_ID:
             issues.append("Model Garden enabled but GCP_PROJECT_ID not set")
         if not MEDGEMMA_ENDPOINT_ID:
             warnings.append("MEDGEMMA_ENDPOINT_ID not set, will use default")
+    
+    # Check local demo mode requirements
+    if AI_SERVICE_MODE == "local_demo" and not OPENAI_CONFIG["api_key"]:
+        warnings.append("Local demo mode without OpenAI key - audio transcription will be unavailable")
     
     # Check data paths
     if not os.path.exists(DATA_PATH):
@@ -155,20 +183,24 @@ def validate_configuration() -> dict:
             warnings.append("HTTPS not enforced in production mode")
         if not SAFETY_CONFIG["enable_emergency_detection"]:
             issues.append("Emergency detection disabled in production - this is unsafe")
+        if AI_SERVICE_MODE == "local_demo":
+            warnings.append("Using local_demo mode in production - consider hybrid or cloud_first")
     
     return {
         "valid": len(issues) == 0,
         "issues": issues,
         "warnings": warnings,
         "deployment_mode": DEPLOYMENT_MODE,
+        "ai_service_mode": AI_SERVICE_MODE,
         "using_model_garden": USE_MEDGEMMA_GARDEN,
-        "architecture": "MedGemma + RAG + Safety"
+        "architecture": "MedGemma + RAG + Safety + Optimized Service Manager"
     }
 
 def get_active_config() -> dict:
     """Get the current active configuration."""
     return {
         "deployment_mode": DEPLOYMENT_MODE,
+        "ai_service_mode": AI_SERVICE_MODE,
         "medgemma_mode": "Model Garden" if USE_MEDGEMMA_GARDEN else "Local Hugging Face",
         "embedding_model": EMBEDDING_MODEL,
         "safety_enabled": SAFETY_CONFIG["enable_emergency_detection"],
@@ -182,7 +214,8 @@ def get_active_config() -> dict:
             "medgemma_4b": "google/medgemma-4b-it",
             "vision": OPENAI_CONFIG["vision_model"],
             "transcription": OPENAI_CONFIG["transcription_model"]
-        }
+        },
+        "service_manager": AI_SERVICE_MANAGER_CONFIG
     }
 
 # Print configuration status on import (only in development)
@@ -190,6 +223,7 @@ if DEPLOYMENT_MODE == "development":
     validation = validate_configuration()
     print(f"\n Configuration Status:")
     print(f"   Mode: {DEPLOYMENT_MODE}")
+    print(f"   AI Service Mode: {AI_SERVICE_MODE}")
     print(f"   MedGemma: {'Model Garden' if USE_MEDGEMMA_GARDEN else 'Local HF'}")
     print(f"   Valid: {validation['valid']}")
     if validation['issues']:

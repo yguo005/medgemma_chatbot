@@ -34,15 +34,15 @@ class AIServices:
                     project_id=gcp_project_id,
                     credentials_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
                 )
-                logger.info("✅ MedGemma Model Garden service initialized successfully")
+                logger.info(" MedGemma Model Garden service initialized successfully")
             except ImportError:
-                logger.warning("⚠️ Model Garden dependencies not available. Install: pip install google-cloud-aiplatform")
+                logger.warning(" Model Garden dependencies not available. Install: pip install google-cloud-aiplatform")
                 self.use_medgemma = False
             except Exception as e:
-                logger.warning(f"⚠️ MedGemma Model Garden initialization failed: {e}")
+                logger.warning(f" MedGemma Model Garden initialization failed: {e}")
                 self.use_medgemma = False
         
-        logger.info("✅ AI Services initialized successfully")
+        logger.info(" AI Services initialized successfully")
     
     async def analyze_image(self, image_data: str, context: str = "medical") -> Dict[str, Any]:
         """
@@ -90,7 +90,7 @@ class AIServices:
             
             analysis_text = response.choices[0].message.content
             
-            logger.info("✅ Image analysis completed successfully")
+            logger.info(" Image analysis completed successfully")
             
             return {
                 "success": True,
@@ -100,7 +100,7 @@ class AIServices:
             }
             
         except Exception as e:
-            logger.error(f"❌ Image analysis failed: {str(e)}")
+            logger.error(f" Image analysis failed: {str(e)}")
             return {
                 "success": False,
                 "error": str(e),
@@ -138,7 +138,7 @@ class AIServices:
                     language="en"  # Specify English for medical context
                 )
             
-            logger.info("✅ Audio transcription completed successfully")
+            logger.info(" Audio transcription completed successfully")
             
             return {
                 "success": True,
@@ -149,7 +149,7 @@ class AIServices:
             }
             
         except Exception as e:
-            logger.error(f"❌ Audio transcription failed: {str(e)}")
+            logger.error(f" Audio transcription failed: {str(e)}")
             return {
                 "success": False,
                 "error": str(e),
@@ -162,7 +162,7 @@ class AIServices:
                 try:
                     os.unlink(temp_file_path)
                 except Exception as cleanup_error:
-                    logger.warning(f"⚠️ Failed to cleanup temp file: {cleanup_error}")
+                    logger.warning(f" Failed to cleanup temp file: {cleanup_error}")
     
     async def enhance_diagnosis_with_rag(self, symptoms: str, rag_response: str) -> str:
         """
@@ -180,10 +180,10 @@ class AIServices:
         if self.use_medgemma and self.medgemma_service:
             try:
                 enhanced_response = await self.medgemma_service.enhance_diagnosis(symptoms, rag_response)
-                logger.info("✅ Diagnosis enhanced with MedGemma Model Garden")
+                logger.info(" Diagnosis enhanced with MedGemma Model Garden")
                 return enhanced_response
             except Exception as e:
-                logger.warning(f"⚠️ MedGemma Model Garden enhancement failed, falling back to GPT-4: {e}")
+                logger.warning(f" MedGemma Model Garden enhancement failed, falling back to GPT-4: {e}")
         
         # Fallback to GPT-4
         try:
@@ -215,11 +215,11 @@ class AIServices:
                 temperature=0.3
             )
             
-            logger.info("✅ Diagnosis enhanced with GPT-4")
+            logger.info(" Diagnosis enhanced with GPT-4")
             return response.choices[0].message.content
             
         except Exception as e:
-            logger.error(f"❌ RAG enhancement failed: {str(e)}")
+            logger.error(f" RAG enhancement failed: {str(e)}")
             return rag_response  # Fall back to original RAG response
     
     async def analyze_symptoms_with_medgemma(
@@ -250,10 +250,10 @@ class AIServices:
         
         try:
             result = await self.medgemma_service.analyze_symptoms(symptoms, duration, intensity, timing)
-            logger.info("✅ Symptoms analyzed with MedGemma Model Garden")
+            logger.info(" Symptoms analyzed with MedGemma Model Garden")
             return result
         except Exception as e:
-            logger.error(f"❌ MedGemma Model Garden symptom analysis failed: {e}")
+            logger.error(f" MedGemma Model Garden symptom analysis failed: {e}")
             return {
                 "success": False,
                 "error": str(e),
