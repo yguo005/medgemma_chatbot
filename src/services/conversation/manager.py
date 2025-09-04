@@ -3,6 +3,11 @@ from typing import Dict, List, Optional, Any
 from enum import Enum
 from datetime import datetime, timedelta
 import re
+import asyncio
+import logging
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 class ConversationState(Enum):
     INITIAL = "initial"
@@ -16,11 +21,15 @@ class ConversationState(Enum):
     FOLLOWUP = "followup"
 
 class ConversationManager:
-    def __init__(self):
+    def __init__(self, ai_service=None):
         # In-memory storage for demo purposes
         # In production, use Redis or a database
         self.sessions: Dict[str, Dict] = {}
         self.session_timeout = timedelta(hours=1)  # Sessions expire after 1 hour
+        
+        # AI service for symptom understanding (Phase 1)
+        self.ai_service = ai_service  # Will be MedGemmaService or ai_service_manager
+        self.use_ai_extraction = ai_service is not None
     
     def cleanup_expired_sessions(self):
         """Remove expired sessions to prevent memory leaks"""
@@ -102,20 +111,51 @@ class ConversationManager:
             return self._handle_general_query(session_id, message)
     
     def _handle_initial_state(self, session_id: str, message: str) -> Dict[str, Any]:
-        """Handle initial symptom description"""
+        """Handle initial symptom description with AI-powered entity extraction"""
         session = self.get_session(session_id)
-        session['collected_data']['symptoms'] = message
+        
+        # Phase 1: AI for Symptom Understanding
+        if self.use_ai_extraction:
+            # Use AI to extract structured data from unstructured input
+            try:
+                structured_data = asyncio.run(self._extract_symptoms_with_ai(message))
+                
+                # Store both original message and structured data
+                session['collected_data']['symptoms'] = message
+                session['collected_data']['ai_extracted_data'] = structured_data
+                
+                # Use AI-extracted primary symptom for more accurate conversation flow
+                symptom_type = structured_data.get('primary_symptom', 'symptoms')
+                characteristics = structured_data.get('characteristics', [])
+                duration_hint = structured_data.get('duration', '')
+                
+                # Create a more intelligent response based on AI understanding
+                response_text = self._create_duration_question_with_ai_context(
+                    symptom_type, characteristics, duration_hint
+                )
+                
+                logger.info(f"AI extracted symptoms: {structured_data}")
+                
+            except Exception as e:
+                logger.error(f"AI extraction failed, falling back to rule-based: {e}")
+                # Fallback to original rule-based approach
+                session['collected_data']['symptoms'] = message
+                symptom_type = self._extract_symptom_type(message)
+                response_text = f"How long have you been experiencing this {symptom_type}?"
+        else:
+            # Original rule-based approach
+            session['collected_data']['symptoms'] = message
+            symptom_type = self._extract_symptom_type(message)
+            response_text = f"How long have you been experiencing this {symptom_type}?"
+        
         session['state'] = ConversationState.DURATION_INQUIRY
         
-        # Extract key symptom words to make duration question more specific
-        symptom_type = self._extract_symptom_type(message)
-        
         # Add message to history
-        self.add_to_history(session_id, message, f"Understanding your {symptom_type}. Let me ask some follow-up questions.")
+        self.add_to_history(session_id, message, f"Understanding your symptoms. Let me ask some follow-up questions.")
         
         return {
             "response_type": "multiple_choice",
-            "response_text": f"How long have you been experiencing this {symptom_type}?",
+            "response_text": response_text,
             "choices": [
                 "Less than 3 days",
                 "1 - 2 weeks", 
@@ -130,16 +170,22 @@ class ConversationManager:
         return self._handle_initial_state(session_id, message)
     
     def _handle_duration_inquiry(self, session_id: str, message: str, is_choice: bool) -> Dict[str, Any]:
-        """Handle duration selection"""
+        """Handle duration selection with AI-extracted context"""
         session = self.get_session(session_id)
         session['collected_data']['duration'] = message
         session['state'] = ConversationState.INTENSITY_INQUIRY
         
-        # Determine appropriate intensity question based on symptoms
-        symptom_type = self._extract_symptom_type(session['collected_data'].get('symptoms', ''))
+        # Use AI-extracted data for better context if available
+        ai_data = session['collected_data'].get('ai_extracted_data', {})
+        symptom_type = ai_data.get('primary_symptom', '') or self._extract_symptom_type(session['collected_data'].get('symptoms', ''))
+        characteristics = ai_data.get('characteristics', [])
         
+        # Create more intelligent intensity questions based on AI understanding
         if any(keyword in symptom_type.lower() for keyword in ['pain', 'ache', 'hurt']):
-            intensity_question = "How would you describe the intensity of your pain?"
+            if characteristics:
+                intensity_question = f"You described {symptom_type} with {', '.join(characteristics[:2])} qualities. How would you rate the intensity?"
+            else:
+                intensity_question = "How would you describe the intensity of your pain?"
             choices = ["Mild (1-3)", "Moderate (4-6)", "Severe (7-10)", "I'm not sure"]
         elif any(keyword in symptom_type.lower() for keyword in ['swelling', 'rash', 'inflammation']):
             intensity_question = "How would you describe the severity of the affected area?"
@@ -319,24 +365,38 @@ class ConversationManager:
         }
     
     def _generate_diagnosis(self, collected_data: Dict) -> Dict[str, Any]:
-        """Generate diagnosis based on collected symptoms with improved logic"""
+        """Generate diagnosis based on collected symptoms with AI-enhanced logic"""
         symptoms = collected_data.get('symptoms', '').lower()
         duration = collected_data.get('duration', '')
         intensity = collected_data.get('intensity', '')
         timing = collected_data.get('timing', '')
         
+        # Use AI-extracted data for better diagnosis if available
+        ai_data = collected_data.get('ai_extracted_data', {})
+        primary_symptom = ai_data.get('primary_symptom', '').lower()
+        characteristics = ai_data.get('characteristics', [])
+        severity_indicators = ai_data.get('severity_indicators', [])
+        location = ai_data.get('location', '')
+        
+        # Combine AI and traditional logic for better diagnosis
+        symptom_context = primary_symptom or symptoms
+        
         # Initialize diagnosis components
         urgency_level = 'moderate'
         
-        # More sophisticated symptom analysis with pattern matching
-        if any(keyword in symptoms for keyword in ['knee', 'joint', 'leg']):
-            if any(keyword in symptoms for keyword in ['pain', 'hurt', 'ache']):
-                if 'severe' in intensity.lower() or 'unable to walk' in symptoms:
+        # Enhanced symptom analysis using AI-extracted data
+        if any(keyword in symptom_context for keyword in ['knee', 'joint', 'leg']):
+            if any(keyword in symptom_context for keyword in ['pain', 'hurt', 'ache']) or 'pain' in primary_symptom:
+                if 'severe' in intensity.lower() or any(sev in severity_indicators for sev in ['severe', 'unbearable']):
                     urgency_level = 'high'
+                
+                # Enhanced description using AI characteristics
+                char_desc = f" with {', '.join(characteristics)}" if characteristics else ""
+                location_desc = f" in the {location}" if location else ""
                     
                 return {
                     'title': 'Orthopedic Knee Assessment',
-                    'description': f'Based on your {duration.lower()} {intensity.lower()} knee symptoms that occur {timing.lower()}, this could indicate various knee conditions ranging from minor strain to more significant joint issues. Knee problems commonly result from injury to bones, ligaments, cartilage, or soft tissue, often caused by physical activity, overuse, or trauma.',
+                    'description': f'Based on your {duration.lower()} {intensity.lower()} knee symptoms{char_desc}{location_desc} that occur {timing.lower()}, this could indicate various knee conditions ranging from minor strain to more significant joint issues. Knee problems commonly result from injury to bones, ligaments, cartilage, or soft tissue, often caused by physical activity, overuse, or trauma.',
                     'recommendations': [
                         'Orthopedic specialist for comprehensive joint evaluation',
                         'Physical therapist for mobility assessment and treatment',
@@ -346,13 +406,17 @@ class ConversationManager:
                     'urgency_level': urgency_level
                 }
                 
-        elif any(keyword in symptoms for keyword in ['head', 'headache', 'migraine']):
-            if any(keyword in symptoms for keyword in ['severe', 'worst', 'sudden']):
+        elif any(keyword in symptom_context for keyword in ['head', 'headache', 'migraine']) or 'headache' in primary_symptom:
+            if any(keyword in symptom_context for keyword in ['severe', 'worst', 'sudden']) or any(sev in severity_indicators for sev in ['severe', 'worst']):
                 urgency_level = 'high'
+            
+            # Enhanced description using AI characteristics
+            char_desc = f" described as {', '.join(characteristics)}" if characteristics else ""
+            location_desc = f" {location}" if location else ""
                 
             return {
                 'title': 'Headache/Cephalgia Assessment',
-                'description': f'You\'ve described {duration.lower()} {intensity.lower()} headaches occurring {timing.lower()}. Headaches can have various causes including tension, stress, dehydration, medication overuse, or underlying medical conditions. The pattern and characteristics help determine the most appropriate treatment approach.',
+                'description': f'You\'ve described {duration.lower()} {intensity.lower()} headaches{char_desc}{location_desc} occurring {timing.lower()}. Headaches can have various causes including tension, stress, dehydration, medication overuse, or underlying medical conditions. The pattern and characteristics help determine the most appropriate treatment approach.',
                 'recommendations': [
                     'Primary care physician for initial evaluation and treatment plan',
                     'Neurologist consultation if headaches are frequent, severe, or changing',
@@ -362,8 +426,8 @@ class ConversationManager:
                 'urgency_level': urgency_level
             }
             
-        elif any(keyword in symptoms for keyword in ['stomach', 'abdominal', 'belly', 'nausea', 'vomit']):
-            if any(keyword in symptoms for keyword in ['severe', 'blood', 'unable to keep']):
+        elif any(keyword in symptom_context for keyword in ['stomach', 'abdominal', 'belly', 'nausea', 'vomit']):
+            if any(keyword in symptom_context for keyword in ['severe', 'blood', 'unable to keep']) or any(sev in severity_indicators for sev in ['severe']):
                 urgency_level = 'high'
                 
             return {
@@ -378,7 +442,7 @@ class ConversationManager:
                 'urgency_level': urgency_level
             }
             
-        elif any(keyword in symptoms for keyword in ['chest', 'heart', 'breathing', 'shortness']):
+        elif any(keyword in symptom_context for keyword in ['chest', 'heart', 'breathing', 'shortness']):
             urgency_level = 'high'  # Chest symptoms often require urgent evaluation
             
             return {
@@ -395,9 +459,10 @@ class ConversationManager:
             
         else:
             # Generic response for unrecognized symptoms
+            ai_context = f" with {', '.join(characteristics[:2])}" if characteristics else ""
             return {
                 'title': 'Medical Consultation Recommended',
-                'description': f'Based on your {duration.lower()} {intensity.lower()} symptoms that occur {timing.lower()}, a comprehensive medical evaluation would be beneficial. While I can provide general guidance, your symptoms deserve professional medical attention to determine the appropriate diagnosis and treatment plan.',
+                'description': f'Based on your {duration.lower()} {intensity.lower()} symptoms{ai_context} that occur {timing.lower()}, a comprehensive medical evaluation would be beneficial. While I can provide general guidance, your symptoms deserve professional medical attention to determine the appropriate diagnosis and treatment plan.',
                 'recommendations': [
                     'Primary care physician for comprehensive medical evaluation',
                     'Specialist consultation based on primary care recommendations',
@@ -407,7 +472,160 @@ class ConversationManager:
                 'urgency_level': urgency_level
             }
     
-    def _extract_symptom_type(self, symptoms: str) -> str:
+    async def _extract_symptoms_with_ai(self, user_input: str) -> Dict[str, Any]:
+        """
+        Phase 1: AI for Symptom Understanding
+        Extract structured medical data from unstructured user input using AI
+        """
+        # Construct the AI prompt for entity extraction
+        extraction_prompt = f"""Analyze the following medical symptom description and extract structured information in JSON format.
+
+User Input: "{user_input}"
+
+Extract the following information:
+1. primary_symptom: The main medical complaint (e.g., "headache", "knee pain", "fever")
+2. characteristics: List of descriptive qualities (e.g., ["pounding", "behind eyes", "throbbing"])
+3. duration: Any mentioned time period (e.g., "two days", "3 weeks", "since yesterday")
+4. associated_symptoms: Other symptoms mentioned (e.g., ["dizziness", "nausea"])
+5. location: Body part or area affected (e.g., "behind eyes", "right knee", "chest")
+6. severity_indicators: Words indicating intensity (e.g., ["severe", "mild", "unbearable"])
+
+Return ONLY a valid JSON object with these fields. If information is not mentioned, use empty string or empty list.
+
+Example format:
+{{
+  "primary_symptom": "headache",
+  "characteristics": ["pounding", "behind eyes"],
+  "duration": "two days",
+  "associated_symptoms": ["dizziness when standing"],
+  "location": "behind eyes",
+  "severity_indicators": ["severe"]
+}}"""
+
+        try:
+            # Call AI service for extraction
+            if hasattr(self.ai_service, 'generate_medical_response'):
+                # Use MedGemmaService directly
+                ai_response = await self.ai_service.generate_medical_response(
+                    query=extraction_prompt,
+                    max_length=300,
+                    temperature=0.1  # Low temperature for consistent extraction
+                )
+                
+                if ai_response.get('success'):
+                    response_text = ai_response.get('response', '')
+                else:
+                    raise Exception(f"AI service error: {ai_response.get('error', 'Unknown error')}")
+                    
+            elif hasattr(self.ai_service, 'analyze_symptoms_text'):
+                # Use ai_service_manager or similar service
+                ai_response = await self.ai_service.analyze_symptoms_text(
+                    symptoms=extraction_prompt
+                )
+                
+                if ai_response.get('success'):
+                    response_text = ai_response.get('response', '')
+                else:
+                    raise Exception(f"AI service error: {ai_response.get('error', 'Unknown error')}")
+            else:
+                raise Exception("AI service does not have required methods")
+            
+            # Parse the JSON response
+            structured_data = self._parse_ai_extraction_response(response_text)
+            
+            logger.info(f" AI extraction successful: {structured_data}")
+            return structured_data
+            
+        except Exception as e:
+            logger.error(f" AI extraction failed: {e}")
+            # Return fallback structured data
+            return self._fallback_symptom_extraction(user_input)
+    
+    def _parse_ai_extraction_response(self, ai_response: str) -> Dict[str, Any]:
+        """Parse the AI's JSON response and validate structure"""
+        try:
+            # Try to find JSON in the response
+            import re
+            json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group()
+                parsed_data = json.loads(json_str)
+                
+                # Validate required fields
+                required_fields = ['primary_symptom', 'characteristics', 'duration', 
+                                 'associated_symptoms', 'location', 'severity_indicators']
+                
+                validated_data = {}
+                for field in required_fields:
+                    validated_data[field] = parsed_data.get(field, [] if field in ['characteristics', 'associated_symptoms', 'severity_indicators'] else '')
+                
+                return validated_data
+            else:
+                raise ValueError("No JSON found in AI response")
+                
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"Failed to parse AI JSON response: {e}")
+            raise Exception("Invalid JSON response from AI")
+    
+    def _fallback_symptom_extraction(self, user_input: str) -> Dict[str, Any]:
+        """Fallback extraction using rule-based approach when AI fails"""
+        logger.info("Using fallback rule-based extraction")
+        
+        # Use existing rule-based logic as fallback
+        primary_symptom = self._extract_symptom_type(user_input)
+        
+        # Simple rule-based extraction
+        user_lower = user_input.lower()
+        
+        # Extract characteristics using keywords
+        characteristics = []
+        char_keywords = ['pounding', 'sharp', 'dull', 'throbbing', 'burning', 'aching', 
+                        'stabbing', 'cramping', 'shooting', 'tingling']
+        for keyword in char_keywords:
+            if keyword in user_lower:
+                characteristics.append(keyword)
+        
+        # Extract duration hints
+        duration = ""
+        duration_patterns = [
+            r'(\d+)\s*(day|days|week|weeks|month|months|year|years)',
+            r'(yesterday|today|last night|this morning)',
+            r'(since\s+\w+)'
+        ]
+        for pattern in duration_patterns:
+            match = re.search(pattern, user_lower)
+            if match:
+                duration = match.group()
+                break
+        
+        return {
+            "primary_symptom": primary_symptom,
+            "characteristics": characteristics,
+            "duration": duration,
+            "associated_symptoms": [],
+            "location": "",
+            "severity_indicators": []
+        }
+    
+    def _create_duration_question_with_ai_context(self, symptom_type: str, 
+                                                 characteristics: List[str], 
+                                                 duration_hint: str) -> str:
+        """Create a more intelligent duration question based on AI-extracted context"""
+        
+        # If duration was already mentioned, acknowledge it
+        if duration_hint:
+            return f"You mentioned {symptom_type} for {duration_hint}. To better understand the timeline, which option best describes the duration?"
+        
+        # Customize question based on symptom type and characteristics
+        if symptom_type in ['headache', 'head pain']:
+            if any(char in ['pounding', 'throbbing'] for char in characteristics):
+                return f"You're experiencing {symptom_type} with {', '.join(characteristics)} characteristics. How long have you had these symptoms?"
+        
+        # Default intelligent question
+        if characteristics:
+            return f"You described {symptom_type} with {', '.join(characteristics[:2])} qualities. How long have you been experiencing this?"
+        else:
+            return f"How long have you been experiencing this {symptom_type}?"
         """Extract the main symptom type from description with improved pattern matching"""
         symptoms_lower = symptoms.lower()
         
@@ -454,14 +672,26 @@ class ConversationManager:
             return 'low'
     
     def process_image_analysis(self, session_id: str, image_analysis: str) -> Dict[str, Any]:
-        """Process image analysis result with improved context"""
+        """Process image analysis result with AI-powered symptom extraction"""
         session = self.get_session(session_id)
         session['collected_data']['image_analysis'] = image_analysis
         session['collected_data']['symptoms'] = image_analysis
         session['state'] = ConversationState.DURATION_INQUIRY
         
-        # Extract symptom type from image analysis
-        symptom_type = self._extract_symptom_type(image_analysis)
+        # Use AI extraction for image analysis if available
+        if self.use_ai_extraction:
+            try:
+                structured_data = asyncio.run(self._extract_symptoms_with_ai(image_analysis))
+                session['collected_data']['ai_extracted_data'] = structured_data
+                symptom_type = structured_data.get('primary_symptom', 'condition')
+                
+                logger.info(f"AI extracted from image analysis: {structured_data}")
+            except Exception as e:
+                logger.error(f"AI extraction failed for image analysis: {e}")
+                symptom_type = self._extract_symptom_type(image_analysis)
+        else:
+            # Fallback to rule-based extraction
+            symptom_type = self._extract_symptom_type(image_analysis)
         
         # Add to conversation history
         self.add_to_history(session_id, "Image uploaded", f"I can see {symptom_type} in your image.")

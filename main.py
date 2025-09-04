@@ -42,8 +42,6 @@ try:
         endpoint_id=MEDGEMMA_ENDPOINT_ID
     )
     
-    conversation_manager = ConversationManager()
-    
     ai_services = AIServices(
         api_key=OPENAI_API_KEY, 
         use_medgemma=USE_MEDGEMMA_GARDEN,
@@ -52,6 +50,9 @@ try:
     
     # Initialize optimized AI service manager (new approach)
     ai_service_manager = create_ai_service_manager(AI_SERVICE_MODE)
+    
+    # Initialize conversation manager with AI service for Phase 1: Symptom Understanding
+    conversation_manager = ConversationManager(ai_service=ai_service_manager)
     
     if USE_MEDGEMMA_GARDEN:
         logger.info(f" MedGemma 4B Model Garden integration enabled (Project: {GCP_PROJECT_ID})")
