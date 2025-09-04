@@ -51,8 +51,12 @@ try:
     # Initialize optimized AI service manager (new approach)
     ai_service_manager = create_ai_service_manager(AI_SERVICE_MODE)
     
-    # Initialize conversation manager with AI service for Phase 1: Symptom Understanding
-    conversation_manager = ConversationManager(ai_service=ai_service_manager)
+    # Initialize conversation manager with both AI service and RAG service for full functionality
+    # Phase 1: AI for Symptom Understanding + Phase 2: RAG for Dynamic Question Generation
+    conversation_manager = ConversationManager(
+        ai_service=ai_service_manager,
+        rag_service=chatbot  # Enable RAG-powered dynamic question generation
+    )
     
     if USE_MEDGEMMA_GARDEN:
         logger.info(f" MedGemma 4B Model Garden integration enabled (Project: {GCP_PROJECT_ID})")

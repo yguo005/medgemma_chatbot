@@ -144,11 +144,11 @@ class ConversationManager:
                         session['state'] = ConversationState.DURATION_INQUIRY
                         self.add_to_history(session_id, message, "Understanding your symptoms. Let me ask some follow-up questions.")
                         
-                        logger.info(f"✅ Generated dynamic duration question using RAG: {dynamic_response['response_text']}")
+                        logger.info(f" Generated dynamic duration question using RAG: {dynamic_response['response_text']}")
                         return dynamic_response
                         
                     except Exception as e:
-                        logger.warning(f"⚠️ RAG question generation failed, using fallback: {e}")
+                        logger.warning(f" RAG question generation failed, using fallback: {e}")
                 
                 # Fallback to AI-context duration question
                 response_text = self._create_duration_question_with_ai_context(
@@ -207,11 +207,11 @@ class ConversationManager:
                 )
                 
                 self.add_to_history(session_id, message, dynamic_response['response_text'])
-                logger.info(f"✅ Generated dynamic intensity question using RAG: {dynamic_response['response_text']}")
+                logger.info(f" Generated dynamic intensity question using RAG: {dynamic_response['response_text']}")
                 return dynamic_response
                 
             except Exception as e:
-                logger.warning(f"⚠️ Dynamic intensity question generation failed, using fallback: {e}")
+                logger.warning(f" Dynamic intensity question generation failed, using fallback: {e}")
         
         # Fallback: Use AI-extracted data for better context if available
         ai_data = session['collected_data'].get('ai_extracted_data', {})
@@ -740,7 +740,7 @@ Return ONLY the JSON object, no additional text."""
             # Parse the AI-generated question
             dynamic_question = self._parse_dynamic_question_response(response_text)
             
-            logger.info(f"✅ Generated dynamic question: {dynamic_question['question']}")
+            logger.info(f" Generated dynamic question: {dynamic_question['question']}")
             
             return {
                 "response_type": "multiple_choice",
@@ -751,7 +751,7 @@ Return ONLY the JSON object, no additional text."""
             }
             
         except Exception as e:
-            logger.error(f"❌ Dynamic question generation failed: {e}")
+            logger.error(f" Dynamic question generation failed: {e}")
             # Fallback to static questions
             return self._generate_fallback_question(primary_symptom, question_type)
     
