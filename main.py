@@ -122,7 +122,7 @@ async def chat(query_request: QueryRequest):
             }
 
         # Step 2: Process with conversation manager
-        response = conversation_manager.process_message(session_id, query_text, is_choice)
+        response = await conversation_manager.process_message(session_id, query_text, is_choice)
         
         # Step 3: Enhanced diagnosis with MedGemma + RAG + Safety
         if response.get('response_type') == 'diagnostic' and chatbot:

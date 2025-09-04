@@ -21,7 +21,7 @@ class ConversationState(Enum):
     FOLLOWUP = "followup"
 
 class ConversationManager:
-    def __init__(self, ai_service=None):
+    def __init__(self, ai_service=None, rag_service=None):
         # In-memory storage for demo purposes
         # In production, use Redis or a database
         self.sessions: Dict[str, Dict] = {}
@@ -30,6 +30,10 @@ class ConversationManager:
         # AI service for symptom understanding (Phase 1)
         self.ai_service = ai_service  # Will be MedGemmaService or ai_service_manager
         self.use_ai_extraction = ai_service is not None
+        
+        # RAG service for dynamic question generation (Phase 2)
+        self.rag_service = rag_service  # Will be Chatbot (RAG system)
+        self.use_rag_questions = rag_service is not None
     
     def cleanup_expired_sessions(self):
         """Remove expired sessions to prevent memory leaks"""
@@ -83,7 +87,7 @@ class ConversationManager:
         })
         session['last_activity'] = datetime.now()
     
-    def process_message(self, session_id: str, message: str, is_choice: bool = False) -> Dict[str, Any]:
+    async def process_message(self, session_id: str, message: str, is_choice: bool = False) -> Dict[str, Any]:
         """Process incoming message and return appropriate response"""
         session = self.get_session(session_id)
         current_state = session['state']
@@ -92,15 +96,15 @@ class ConversationManager:
         session['collected_data']['last_message'] = message
         
         if current_state == ConversationState.INITIAL:
-            return self._handle_initial_state(session_id, message)
+            return await self._handle_initial_state(session_id, message)
         elif current_state == ConversationState.SYMPTOM_DESCRIPTION:
-            return self._handle_symptom_description(session_id, message)
+            return await self._handle_symptom_description(session_id, message)
         elif current_state == ConversationState.DURATION_INQUIRY:
-            return self._handle_duration_inquiry(session_id, message, is_choice)
+            return await self._handle_duration_inquiry(session_id, message, is_choice)
         elif current_state == ConversationState.INTENSITY_INQUIRY:
-            return self._handle_intensity_inquiry(session_id, message, is_choice)
+            return await self._handle_intensity_inquiry(session_id, message, is_choice)
         elif current_state == ConversationState.TIMING_INQUIRY:
-            return self._handle_timing_inquiry(session_id, message, is_choice)
+            return await self._handle_timing_inquiry(session_id, message, is_choice)
         elif current_state == ConversationState.DIAGNOSIS:
             return self._handle_diagnosis(session_id, message)
         elif current_state == ConversationState.SERVICES:
@@ -110,7 +114,7 @@ class ConversationManager:
         else:
             return self._handle_general_query(session_id, message)
     
-    def _handle_initial_state(self, session_id: str, message: str) -> Dict[str, Any]:
+    async def _handle_initial_state(self, session_id: str, message: str) -> Dict[str, Any]:
         """Handle initial symptom description with AI-powered entity extraction"""
         session = self.get_session(session_id)
         
@@ -118,7 +122,7 @@ class ConversationManager:
         if self.use_ai_extraction:
             # Use AI to extract structured data from unstructured input
             try:
-                structured_data = asyncio.run(self._extract_symptoms_with_ai(message))
+                structured_data = await self._extract_symptoms_with_ai(message)
                 
                 # Store both original message and structured data
                 session['collected_data']['symptoms'] = message
@@ -126,15 +130,30 @@ class ConversationManager:
                 
                 # Use AI-extracted primary symptom for more accurate conversation flow
                 symptom_type = structured_data.get('primary_symptom', 'symptoms')
-                characteristics = structured_data.get('characteristics', [])
-                duration_hint = structured_data.get('duration', '')
-                
-                # Create a more intelligent response based on AI understanding
-                response_text = self._create_duration_question_with_ai_context(
-                    symptom_type, characteristics, duration_hint
-                )
-                
                 logger.info(f"AI extracted symptoms: {structured_data}")
+                
+                # Phase 2: Generate dynamic duration question using RAG
+                if self.rag_service:
+                    try:
+                        dynamic_response = await self._generate_dynamic_question_with_rag(
+                            primary_symptom=symptom_type,
+                            collected_data=session['collected_data'],
+                            question_type="duration"
+                        )
+                        
+                        session['state'] = ConversationState.DURATION_INQUIRY
+                        self.add_to_history(session_id, message, "Understanding your symptoms. Let me ask some follow-up questions.")
+                        
+                        logger.info(f"✅ Generated dynamic duration question using RAG: {dynamic_response['response_text']}")
+                        return dynamic_response
+                        
+                    except Exception as e:
+                        logger.warning(f"⚠️ RAG question generation failed, using fallback: {e}")
+                
+                # Fallback to AI-context duration question
+                response_text = self._create_duration_question_with_ai_context(
+                    symptom_type, structured_data.get('characteristics', []), structured_data.get('duration', '')
+                )
                 
             except Exception as e:
                 logger.error(f"AI extraction failed, falling back to rule-based: {e}")
@@ -165,17 +184,36 @@ class ConversationManager:
             ]
         }
     
-    def _handle_symptom_description(self, session_id: str, message: str) -> Dict[str, Any]:
+    async def _handle_symptom_description(self, session_id: str, message: str) -> Dict[str, Any]:
         """Handle symptom description from photo/voice analysis"""
-        return self._handle_initial_state(session_id, message)
+        return await self._handle_initial_state(session_id, message)
     
-    def _handle_duration_inquiry(self, session_id: str, message: str, is_choice: bool) -> Dict[str, Any]:
-        """Handle duration selection with AI-extracted context"""
+    async def _handle_duration_inquiry(self, session_id: str, message: str, is_choice: bool) -> Dict[str, Any]:
+        """Handle duration selection with RAG-powered intensity question"""
         session = self.get_session(session_id)
         session['collected_data']['duration'] = message
         session['state'] = ConversationState.INTENSITY_INQUIRY
         
-        # Use AI-extracted data for better context if available
+        # Get primary symptom for context
+        primary_symptom = self._extract_primary_symptom(session['collected_data'])
+        
+        # Phase 2: Generate dynamic intensity question using RAG
+        if self.rag_service:
+            try:
+                dynamic_response = await self._generate_dynamic_question_with_rag(
+                    primary_symptom=primary_symptom,
+                    collected_data=session['collected_data'],
+                    question_type="intensity"
+                )
+                
+                self.add_to_history(session_id, message, dynamic_response['response_text'])
+                logger.info(f"✅ Generated dynamic intensity question using RAG: {dynamic_response['response_text']}")
+                return dynamic_response
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Dynamic intensity question generation failed, using fallback: {e}")
+        
+        # Fallback: Use AI-extracted data for better context if available
         ai_data = session['collected_data'].get('ai_extracted_data', {})
         symptom_type = ai_data.get('primary_symptom', '') or self._extract_symptom_type(session['collected_data'].get('symptoms', ''))
         characteristics = ai_data.get('characteristics', [])
@@ -202,12 +240,32 @@ class ConversationManager:
             "choices": choices
         }
     
-    def _handle_intensity_inquiry(self, session_id: str, message: str, is_choice: bool) -> Dict[str, Any]:
-        """Handle intensity selection"""
+    async def _handle_intensity_inquiry(self, session_id: str, message: str, is_choice: bool) -> Dict[str, Any]:
+        """Handle intensity selection with RAG-powered timing question"""
         session = self.get_session(session_id)
         session['collected_data']['intensity'] = message
         session['state'] = ConversationState.TIMING_INQUIRY
         
+        # Get primary symptom for context
+        primary_symptom = self._extract_primary_symptom(session['collected_data'])
+        
+        # Phase 2: Generate dynamic timing question using RAG
+        if self.rag_service:
+            try:
+                dynamic_response = await self._generate_dynamic_question_with_rag(
+                    primary_symptom=primary_symptom,
+                    collected_data=session['collected_data'],
+                    question_type="timing"
+                )
+                
+                self.add_to_history(session_id, message, dynamic_response['response_text'])
+                logger.info(f"✅ Generated dynamic timing question using RAG: {dynamic_response['response_text']}")
+                return dynamic_response
+                
+            except Exception as e:
+                logger.warning(f"⚠️ Dynamic timing question generation failed, using fallback: {e}")
+        
+        # Fallback timing question
         timing_question = "When do these symptoms typically occur or get worse?"
         choices = [
             "In the morning",
@@ -221,12 +279,12 @@ class ConversationManager:
         self.add_to_history(session_id, message, timing_question)
         
         return {
-            "response_type": "multiple_choice",
+            "response_type": "multiple_choice", 
             "response_text": timing_question,
-            "choices": choices
+            "choices": choices[:4]  # Limit to 4 choices for consistency
         }
     
-    def _handle_timing_inquiry(self, session_id: str, message: str, is_choice: bool) -> Dict[str, Any]:
+    async def _handle_timing_inquiry(self, session_id: str, message: str, is_choice: bool) -> Dict[str, Any]:
         """Handle timing selection and provide diagnosis"""
         session = self.get_session(session_id)
         session['collected_data']['timing'] = message
@@ -607,9 +665,184 @@ Example format:
             "severity_indicators": []
         }
     
-    def _create_duration_question_with_ai_context(self, symptom_type: str, 
-                                                 characteristics: List[str], 
-                                                 duration_hint: str) -> str:
+    async def _generate_dynamic_question_with_rag(self, 
+                                                primary_symptom: str, 
+                                                collected_data: Dict[str, Any], 
+                                                question_type: str) -> Dict[str, Any]:
+        """
+        Phase 2: AI for Dynamic Question Generation using RAG
+        Generate clinically relevant follow-up questions using medical encyclopedia context
+        """
+        try:
+            # Step 1: Retrieve relevant clinical context from medical encyclopedia
+            rag_query = f"{primary_symptom} assessment {question_type} clinical evaluation"
+            
+            logger.info(f" Retrieving RAG context for: {rag_query}")
+            
+            # Query the RAG system for relevant medical context
+            if hasattr(self.rag_service, 'chat'):
+                # Use chatbot's RAG system
+                rag_response = await self.rag_service.chat(rag_query, use_ai_enhancement=False)
+                clinical_context = rag_response.get('response', '')
+            elif hasattr(self.rag_service, 'query_vectorstore'):
+                # Direct vectorstore query
+                clinical_context = await self.rag_service.query_vectorstore(rag_query)
+            else:
+                raise Exception("RAG service does not have required methods")
+            
+            logger.info(f" Retrieved clinical context: {clinical_context[:200]}...")
+            
+            # Step 2: Construct user data context
+            user_context = self._construct_user_data_context(collected_data)
+            
+            # Step 3: Generate dynamic question using AI + RAG
+            question_prompt = f"""You are a medical AI assistant generating the next most important follow-up question for a patient assessment.
+
+CLINICAL CONTEXT FROM MEDICAL ENCYCLOPEDIA:
+{clinical_context}
+
+CURRENT PATIENT DATA:
+{user_context}
+
+TASK: Based on the clinical context above and the patient's current data, what is the single most important {question_type} question to ask next?
+
+REQUIREMENTS:
+1. The question must be clinically relevant based on the medical encyclopedia context
+2. Consider what information would be most valuable for assessment
+3. Provide exactly 4 multiple-choice options
+4. Make the question specific to the patient's symptoms
+5. Use proper medical terminology but keep it patient-friendly
+
+OUTPUT FORMAT (JSON only):
+{{
+  "question": "Your specific question here",
+  "choices": ["Option 1", "Option 2", "Option 3", "Option 4"],
+  "clinical_rationale": "Brief explanation of why this question is important"
+}}
+
+Return ONLY the JSON object, no additional text."""
+
+            # Call AI service to generate the question
+            if hasattr(self.ai_service, 'generate_medical_response'):
+                ai_response = await self.ai_service.generate_medical_response(
+                    query=question_prompt,
+                    max_length=400,
+                    temperature=0.3  # Moderate creativity for question generation
+                )
+                
+                if ai_response.get('success'):
+                    response_text = ai_response.get('response', '')
+                else:
+                    raise Exception(f"AI service error: {ai_response.get('error', 'Unknown error')}")
+            else:
+                raise Exception("AI service does not support question generation")
+            
+            # Parse the AI-generated question
+            dynamic_question = self._parse_dynamic_question_response(response_text)
+            
+            logger.info(f"✅ Generated dynamic question: {dynamic_question['question']}")
+            
+            return {
+                "response_type": "multiple_choice",
+                "response_text": dynamic_question['question'],
+                "choices": dynamic_question['choices'],
+                "clinical_rationale": dynamic_question.get('clinical_rationale', ''),
+                "generation_method": "rag_dynamic"
+            }
+            
+        except Exception as e:
+            logger.error(f"❌ Dynamic question generation failed: {e}")
+            # Fallback to static questions
+            return self._generate_fallback_question(primary_symptom, question_type)
+    
+    def _construct_user_data_context(self, collected_data: Dict[str, Any]) -> str:
+        """Construct a summary of user data for AI context"""
+        context_parts = []
+        
+        # Original symptoms
+        if collected_data.get('symptoms'):
+            context_parts.append(f"Original complaint: {collected_data['symptoms']}")
+        
+        # AI-extracted data
+        ai_data = collected_data.get('ai_extracted_data', {})
+        if ai_data:
+            if ai_data.get('primary_symptom'):
+                context_parts.append(f"Primary symptom: {ai_data['primary_symptom']}")
+            if ai_data.get('characteristics'):
+                context_parts.append(f"Characteristics: {', '.join(ai_data['characteristics'])}")
+            if ai_data.get('location'):
+                context_parts.append(f"Location: {ai_data['location']}")
+            if ai_data.get('duration'):
+                context_parts.append(f"Duration mentioned: {ai_data['duration']}")
+            if ai_data.get('associated_symptoms'):
+                context_parts.append(f"Associated symptoms: {', '.join(ai_data['associated_symptoms'])}")
+        
+        # Previously collected answers
+        if collected_data.get('duration'):
+            context_parts.append(f"Duration selected: {collected_data['duration']}")
+        if collected_data.get('intensity'):
+            context_parts.append(f"Intensity: {collected_data['intensity']}")
+        if collected_data.get('timing'):
+            context_parts.append(f"Timing pattern: {collected_data['timing']}")
+        
+        return "\n".join(context_parts) if context_parts else "No specific data collected yet"
+    
+    def _parse_dynamic_question_response(self, ai_response: str) -> Dict[str, Any]:
+        """Parse the AI's dynamic question JSON response"""
+        try:
+            # Try to find JSON in the response
+            import re
+            json_match = re.search(r'\{.*\}', ai_response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group()
+                parsed_data = json.loads(json_str)
+                
+                # Validate required fields
+                if 'question' not in parsed_data or 'choices' not in parsed_data:
+                    raise ValueError("Missing required fields in AI response")
+                
+                if not isinstance(parsed_data['choices'], list) or len(parsed_data['choices']) != 4:
+                    raise ValueError("Choices must be a list of exactly 4 options")
+                
+                return {
+                    'question': parsed_data['question'],
+                    'choices': parsed_data['choices'],
+                    'clinical_rationale': parsed_data.get('clinical_rationale', '')
+                }
+            else:
+                raise ValueError("No JSON found in AI response")
+                
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"Failed to parse dynamic question JSON: {e}")
+            raise Exception("Invalid JSON response from AI for question generation")
+    
+    def _generate_fallback_question(self, primary_symptom: str, question_type: str) -> Dict[str, Any]:
+        """Generate fallback question when RAG+AI fails"""
+        logger.info(f"Using fallback question generation for {primary_symptom} - {question_type}")
+        
+        fallback_questions = {
+            "duration": {
+                "question": f"How long have you been experiencing this {primary_symptom}?",
+                "choices": ["Less than 3 days", "1 - 2 weeks", "1 month", "More than 3 months", "More than 1 year"]
+            },
+            "intensity": {
+                "question": f"How would you describe the severity of your {primary_symptom}?",
+                "choices": ["Mild (1-3)", "Moderate (4-6)", "Severe (7-10)", "I'm not sure"]
+            },
+            "timing": {
+                "question": "When do these symptoms typically occur or get worse?",
+                "choices": ["In the morning", "During the day", "In the evening", "At night", "After physical activity", "No specific pattern"]
+            }
+        }
+        
+        fallback = fallback_questions.get(question_type, fallback_questions["duration"])
+        
+        return {
+            "response_type": "multiple_choice",
+            "response_text": fallback["question"],
+            "choices": fallback["choices"][:4],  # Ensure exactly 4 choices
+            "generation_method": "fallback"
+        }
         """Create a more intelligent duration question based on AI-extracted context"""
         
         # If duration was already mentioned, acknowledge it
@@ -626,7 +859,41 @@ Example format:
             return f"You described {symptom_type} with {', '.join(characteristics[:2])} qualities. How long have you been experiencing this?"
         else:
             return f"How long have you been experiencing this {symptom_type}?"
-        """Extract the main symptom type from description with improved pattern matching"""
+    def _extract_primary_symptom(self, collected_data: Dict[str, Any]) -> str:
+        """Extract the primary symptom from collected data for context"""
+        # Try AI-extracted data first
+        ai_data = collected_data.get('ai_extracted_data', {})
+        if ai_data.get('primary_symptom'):
+            return ai_data['primary_symptom']
+        
+        # Fallback to rule-based extraction
+        symptoms = collected_data.get('symptoms', '')
+        if symptoms:
+            return self._extract_symptom_type(symptoms)
+        
+        return 'symptoms'
+
+    def _create_duration_question_with_ai_context(self, symptom_type: str, 
+                                                 characteristics: List[str], 
+                                                 duration_hint: str) -> str:
+        """Create a more intelligent duration question based on AI-extracted context"""
+        
+        # If duration was already mentioned, acknowledge it
+        if duration_hint:
+            return f"You mentioned {symptom_type} for {duration_hint}. To better understand the timeline, which option best describes the duration?"
+        
+        # Create contextual question based on symptom type
+        if symptom_type in ['headache', 'head pain']:
+            if any(char in ['pounding', 'throbbing'] for char in characteristics):
+                return f"You're experiencing {symptom_type} with {', '.join(characteristics)} characteristics. How long have you had these symptoms?"
+        
+        # Default intelligent question
+        if characteristics:
+            return f"You described {symptom_type} with {', '.join(characteristics[:2])} qualities. How long have you been experiencing this?"
+        else:
+            return f"How long have you been experiencing this {symptom_type}?"
+
+    def _extract_symptom_type(self, symptoms: str) -> str:
         symptoms_lower = symptoms.lower()
         
         # Use regular expressions for better pattern matching
