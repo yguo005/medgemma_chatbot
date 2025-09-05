@@ -698,7 +698,7 @@ Example format:
             # Query the RAG system for relevant medical context
             if hasattr(self.rag_service, 'chat'):
                 # Use chatbot's RAG system
-                rag_response = await self.rag_service.chat(rag_query, use_ai_enhancement=False)
+                rag_response = await self.rag_service.get_response(rag_query, use_ai_enhancement=False)
                 clinical_context = rag_response.get('response', '')
             elif hasattr(self.rag_service, 'query_vectorstore'):
                 # Direct vectorstore query
@@ -876,7 +876,7 @@ Return ONLY the JSON object, no additional text."""
             if self.rag_service:
                 if hasattr(self.rag_service, 'chat'):
                     # Use chatbot's RAG system
-                    rag_response = await self.rag_service.chat(rag_query, use_ai_enhancement=False)
+                    rag_response = await self.rag_service.get_response(rag_query, use_ai_enhancement=False)
                     encyclopedia_context = rag_response.get('response', '')
                 elif hasattr(self.rag_service, 'query_vectorstore'):
                     # Direct vectorstore query
