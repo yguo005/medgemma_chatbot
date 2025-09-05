@@ -167,6 +167,18 @@ async def chat(query_request: QueryRequest):
                     response['safety_validated'] = False
                     logger.warning(f" Session {session_id}: AI response failed safety validation")
                 
+                # Phase 3: Validate and enhance final explanation
+                if 'final_explanation' in response:
+                    explanation_safety_check = safety_guardrails.validate_response(response['final_explanation'])
+                    if explanation_safety_check["is_safe"]:
+                        response['final_explanation'] = explanation_safety_check["filtered_response"]
+                        response['explanation_validated'] = True
+                        logger.info(f" Session {session_id}: Phase 3 explanation validated and enhanced")
+                    else:
+                        response['final_explanation'] = "Please consult with a healthcare professional for detailed information about your condition."
+                        response['explanation_validated'] = False
+                        logger.warning(f" Session {session_id}: Phase 3 explanation failed safety validation")
+                
                 logger.info(f" Session {session_id}: Enhanced with {response['enhanced_with']}")
                 
             except Exception as enhancement_error:
@@ -324,7 +336,7 @@ async def health_check():
         "safety_guardrails_initialized": safety_guardrails is not None,
         "medgemma_garden_enabled": USE_MEDGEMMA_GARDEN,
         "ai_service_mode": AI_SERVICE_MODE,
-        "architecture": "MedGemma + RAG + Safety Guardrails + Optimized Service Manager"
+        "architecture": "MedGemma + RAG + Safety Guardrails + Phase 3 Final Explanations"
     }
     
     # Add detailed service manager status if available

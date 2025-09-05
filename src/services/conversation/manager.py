@@ -259,11 +259,11 @@ class ConversationManager:
                 )
                 
                 self.add_to_history(session_id, message, dynamic_response['response_text'])
-                logger.info(f"✅ Generated dynamic timing question using RAG: {dynamic_response['response_text']}")
+                logger.info(f" Generated dynamic timing question using RAG: {dynamic_response['response_text']}")
                 return dynamic_response
                 
             except Exception as e:
-                logger.warning(f"⚠️ Dynamic timing question generation failed, using fallback: {e}")
+                logger.warning(f" Dynamic timing question generation failed, using fallback: {e}")
         
         # Fallback timing question
         timing_question = "When do these symptoms typically occur or get worse?"
@@ -285,7 +285,7 @@ class ConversationManager:
         }
     
     async def _handle_timing_inquiry(self, session_id: str, message: str, is_choice: bool) -> Dict[str, Any]:
-        """Handle timing selection and provide diagnosis"""
+        """Handle timing selection and provide diagnosis with Phase 3 final explanation"""
         session = self.get_session(session_id)
         session['collected_data']['timing'] = message
         session['state'] = ConversationState.DIAGNOSIS
@@ -293,12 +293,28 @@ class ConversationManager:
         # Generate diagnosis based on collected data
         diagnosis = self._generate_diagnosis(session['collected_data'])
         
+        # Phase 3: Generate final explanation using RAG + AI
+        final_explanation_result = {"explanation": "", "success": False}
+        if self.rag_service:
+            try:
+                final_explanation_result = await self._generate_final_explanation_with_rag(diagnosis['title'])
+                logger.info(f" Generated Phase 3 final explanation: {final_explanation_result['explanation'][:100]}...")
+            except Exception as e:
+                logger.warning(f" Phase 3 explanation generation failed: {e}")
+                final_explanation_result = self._generate_fallback_explanation(diagnosis['title'])
+        else:
+            logger.info(" RAG service not available, using fallback explanation")
+            final_explanation_result = self._generate_fallback_explanation(diagnosis['title'])
+        
         self.add_to_history(session_id, message, f"Diagnosis: {diagnosis['title']}")
         
         return {
             "response_type": "diagnostic",
             "diagnosis_title": diagnosis['title'],
             "diagnosis_description": diagnosis['description'],
+            "final_explanation": final_explanation_result['explanation'],  # Phase 3 result
+            "explanation_source": final_explanation_result.get('generation_method', 'unknown'),
+            "key_terms_explained": final_explanation_result.get('key_terms', []),
             "recommendations": diagnosis['recommendations'],
             "urgency_level": diagnosis.get('urgency_level', 'moderate'),
             "next_action": "services"
@@ -842,6 +858,143 @@ Return ONLY the JSON object, no additional text."""
             "response_text": fallback["question"],
             "choices": fallback["choices"][:4],  # Ensure exactly 4 choices
             "generation_method": "fallback"
+        }
+
+    async def _generate_final_explanation_with_rag(self, diagnosis_title: str) -> Dict[str, Any]:
+        """
+        Phase 3: AI for Generating the Final Explanation using RAG
+        Generate trustworthy, user-friendly explanations based on medical encyclopedia context
+        """
+        try:
+            # Step 1: Extract key medical terms from diagnosis title
+            key_terms = self._extract_medical_terms_from_diagnosis(diagnosis_title)
+            logger.info(f" Extracted key terms for explanation: {key_terms}")
+            
+            # Step 2: Retrieve factual context from medical encyclopedia using RAG
+            rag_query = f"{' '.join(key_terms)} definition medical encyclopedia explanation"
+            
+            if self.rag_service:
+                if hasattr(self.rag_service, 'chat'):
+                    # Use chatbot's RAG system
+                    rag_response = await self.rag_service.chat(rag_query, use_ai_enhancement=False)
+                    encyclopedia_context = rag_response.get('response', '')
+                elif hasattr(self.rag_service, 'query_vectorstore'):
+                    # Direct vectorstore query
+                    encyclopedia_context = await self.rag_service.query_vectorstore(rag_query)
+                else:
+                    raise Exception("RAG service does not have required methods")
+                
+                logger.info(f" Retrieved encyclopedia context: {encyclopedia_context[:200]}...")
+            else:
+                encyclopedia_context = "No trusted medical context available."
+            
+            # Step 3: Generate user-friendly explanation using AI + RAG context
+            explanation_prompt = f"""You are a medical AI assistant creating a patient-friendly explanation based on trusted medical sources.
+
+CONTEXT FROM MEDICAL ENCYCLOPEDIA:
+{encyclopedia_context}
+
+DIAGNOSIS TITLE: {diagnosis_title}
+
+TASK: Based on the medical encyclopedia context above, write a simple, easy-to-understand explanation for a patient about their condition.
+
+REQUIREMENTS:
+1. Use the factual information from the encyclopedia context
+2. Explain medical terms in simple language
+3. Focus on what the condition is and why medical consultation is important
+4. Keep the tone reassuring but emphasize professional medical guidance
+5. Do not diagnose or provide specific medical advice
+6. Limit to 2-3 sentences
+
+OUTPUT FORMAT: Return only the plain text explanation, no additional formatting."""
+
+            # Call AI service to generate the explanation
+            if hasattr(self.ai_service, 'generate_medical_response'):
+                ai_response = await self.ai_service.generate_medical_response(
+                    query=explanation_prompt,
+                    max_length=300,
+                    temperature=0.2  # Low temperature for consistent, factual responses
+                )
+                
+                if ai_response.get('success'):
+                    explanation = ai_response.get('response', '').strip()
+                else:
+                    raise Exception(f"AI service error: {ai_response.get('error', 'Unknown error')}")
+            else:
+                raise Exception("AI service does not support explanation generation")
+            
+            logger.info(f" Generated final explanation: {explanation[:100]}...")
+            
+            return {
+                "explanation": explanation,
+                "encyclopedia_context": encyclopedia_context[:500],  # Include source context
+                "key_terms": key_terms,
+                "generation_method": "rag_explanation",
+                "success": True
+            }
+            
+        except Exception as e:
+            logger.error(f" Final explanation generation failed: {e}")
+            return self._generate_fallback_explanation(diagnosis_title)
+    
+    def _extract_medical_terms_from_diagnosis(self, diagnosis_title: str) -> List[str]:
+        """Extract key medical terms from diagnosis title for RAG query"""
+        # Common medical terms mapping
+        medical_term_patterns = {
+            'headache': ['headache', 'cephalgia'],
+            'cephalgia': ['headache', 'cephalgia'], 
+            'migraine': ['migraine', 'headache'],
+            'knee': ['knee', 'joint'],
+            'pain': ['pain', 'ache'],
+            'orthopedic': ['orthopedic', 'bone', 'joint'],
+            'gastrointestinal': ['gastrointestinal', 'digestive', 'stomach'],
+            'cardiopulmonary': ['cardiopulmonary', 'heart', 'lung'],
+            'respiratory': ['respiratory', 'breathing', 'lung'],
+            'dermatological': ['dermatological', 'skin'],
+            'neurological': ['neurological', 'nervous system']
+        }
+        
+        diagnosis_lower = diagnosis_title.lower()
+        key_terms = []
+        
+        # Extract terms based on patterns
+        for term, related_terms in medical_term_patterns.items():
+            if term in diagnosis_lower:
+                key_terms.extend(related_terms)
+        
+        # Fallback: extract first few words if no specific patterns found
+        if not key_terms:
+            words = diagnosis_title.split()[:2]  # Take first 2 words
+            key_terms = [word.lower().strip('/:') for word in words if len(word) > 3]
+        
+        return list(set(key_terms))  # Remove duplicates
+    
+    def _generate_fallback_explanation(self, diagnosis_title: str) -> Dict[str, Any]:
+        """Generate fallback explanation when RAG+AI fails"""
+        logger.info(f"Using fallback explanation for: {diagnosis_title}")
+        
+        fallback_explanations = {
+            "headache": "Headaches are a common condition involving pain in the head or neck area. They can have various causes and it's important to consult with a healthcare professional for proper evaluation and treatment.",
+            "knee": "Knee problems can involve the bones, joints, or soft tissues of the knee area. A healthcare professional can help determine the cause and recommend appropriate treatment options.",
+            "chest": "Chest-related symptoms require prompt medical attention to ensure proper evaluation. A healthcare professional can assess your condition and provide appropriate guidance.",
+            "gastrointestinal": "Digestive symptoms can have various causes and may require medical evaluation. It's important to consult with a healthcare professional for proper assessment and treatment recommendations."
+        }
+        
+        # Find appropriate fallback based on diagnosis content
+        diagnosis_lower = diagnosis_title.lower()
+        explanation = "This condition may require medical evaluation to determine the appropriate course of action. Please consult with a healthcare professional for proper assessment and guidance."
+        
+        for key, fallback_text in fallback_explanations.items():
+            if key in diagnosis_lower:
+                explanation = fallback_text
+                break
+        
+        return {
+            "explanation": explanation,
+            "encyclopedia_context": "",
+            "key_terms": [],
+            "generation_method": "fallback",
+            "success": False
         }
         """Create a more intelligent duration question based on AI-extracted context"""
         
