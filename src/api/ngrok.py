@@ -4,6 +4,7 @@ import sys
 import asyncio
 from pyngrok import ngrok, conf
 
+# for Colab
 sys.path.insert(0, os.path.abspath('src'))
 
 # Validate environment variables
