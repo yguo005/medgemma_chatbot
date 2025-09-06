@@ -130,16 +130,47 @@ class MedGemmaService:
         """Validate system requirements following official notebook guidelines"""
         google_colab = "google.colab" in __import__('sys').modules
         
-        if "27b" in self.model_variant and google_colab:
-            if torch.cuda.is_available():
-                device_name = torch.cuda.get_device_name(0)
-                if not ("A100" in device_name and self.use_quantization):
-                    logger.warning(
-                        "⚠️ Runtime may have insufficient memory for 27B variant. "
-                        "Recommend A100 GPU with quantization enabled."
-                    )
+        # Check GPU memory availability (following official memory checking)
+        if torch.cuda.is_available():
+            gpu_memory_total = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            gpu_memory_allocated = torch.cuda.memory_allocated(0) / (1024**3)
+            gpu_memory_free = gpu_memory_total - gpu_memory_allocated
+            
+            logger.info(f"🔍 GPU Memory Check:")
+            logger.info(f"   Total: {gpu_memory_total:.2f} GB")
+            logger.info(f"   Allocated: {gpu_memory_allocated:.2f} GB")
+            logger.info(f"   Free: {gpu_memory_free:.2f} GB")
+            
+            # Official notebook memory requirements
+            if "27b" in self.model_variant:
+                min_gpu_memory = 8.0  # 27B requires more memory
+                if google_colab:
+                    device_name = torch.cuda.get_device_name(0)
+                    if not ("A100" in device_name and self.use_quantization):
+                        logger.warning(
+                            "⚠️ 27B variant requires A100 GPU with quantization in Colab"
+                        )
             else:
-                logger.warning("⚠️ 27B variant requires GPU acceleration for optimal performance.")
+                min_gpu_memory = 4.0  # 4B requires at least 4GB
+            
+            # Auto-enable solutions for insufficient memory
+            if gpu_memory_free < 1.0:  # Less than 1GB free - critical
+                logger.warning(f"🚨 Critical GPU memory shortage: {gpu_memory_free:.2f}GB free")
+                logger.warning("   Auto-enabling aggressive memory management")
+                self.use_quantization = True
+                
+                if gpu_memory_free < 0.5:  # Less than 500MB - emergency
+                    logger.error(f"🚨 Emergency: Only {gpu_memory_free*1024:.0f}MB GPU memory free")
+                    logger.error("   This is insufficient for any model loading")
+                    raise RuntimeError(
+                        f"Insufficient GPU memory: {gpu_memory_free*1024:.0f}MB free. "
+                        f"Need at least 500MB. Please restart runtime to clear GPU memory."
+                    )
+                    
+            elif gpu_memory_free < min_gpu_memory:
+                logger.warning(f"⚠️ Low GPU memory: {gpu_memory_free:.2f}GB free (need {min_gpu_memory}GB)")
+                logger.info("   Auto-enabling quantization to reduce memory usage")
+                self.use_quantization = True
         
         logger.info(f"📋 Model Configuration:")
         logger.info(f"   Model: {self.model_name}")
@@ -168,9 +199,15 @@ class MedGemmaService:
             logger.info(" GPU memory cache cleared")
     
     def _initialize_model(self):
-        """Initialize MedGemma model following official Google implementation"""
+        """Initialize MedGemma model following official Google implementation with memory management"""
         try:
             logger.info(f"🚀 Loading MedGemma model: {self.model_name}")
+            
+            # Clear any existing GPU memory before starting
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                logger.info("🧹 Cleared GPU memory cache")
             
             # Configure model loading parameters following official notebook
             model_kwargs = {
@@ -184,42 +221,100 @@ class MedGemmaService:
                 model_kwargs["quantization_config"] = BitsAndBytesConfig(
                     load_in_4bit=True  # Official configuration
                 )
+                
+                # Add conservative memory limits for quantization
+                if torch.cuda.is_available():
+                    gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                    # Use only 70% of available memory to prevent OOM
+                    max_memory = f"{gpu_memory_gb * 0.7:.1f}GiB"
+                    model_kwargs["max_memory"] = {0: max_memory}
+                    logger.info(f"🔧 Setting conservative memory limit: {max_memory}")
             
             # Load processor or tokenizer based on model variant (following official logic)
-            if self.is_text_only:
-                logger.info("📝 Loading AutoTokenizer for text-only variant")
-                self.processor_or_tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            else:
-                logger.info("🖼️ Loading AutoProcessor for multimodal variant")
-                self.processor_or_tokenizer = AutoProcessor.from_pretrained(self.model_name)
+            try:
+                if self.is_text_only:
+                    logger.info("📝 Loading AutoTokenizer for text-only variant")
+                    self.processor_or_tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+                else:
+                    logger.info("🖼️ Loading AutoProcessor for multimodal variant")
+                    self.processor_or_tokenizer = AutoProcessor.from_pretrained(self.model_name)
+            except Exception as e:
+                logger.error(f"❌ Failed to load processor/tokenizer: {e}")
+                raise
             
-            # Load model with appropriate class (following official implementation)
-            logger.info(f"🔧 Loading model with {self.model_class.__name__}")
-            self.model = self.model_class.from_pretrained(
-                self.model_name,
-                **model_kwargs
-            )
+            # Load model with appropriate class and comprehensive error handling
+            try:
+                logger.info(f"🔧 Loading model with {self.model_class.__name__}")
+                self.model = self.model_class.from_pretrained(
+                    self.model_name,
+                    **model_kwargs
+                )
+                logger.info("✅ Model loaded successfully")
+                
+            except torch.cuda.OutOfMemoryError as e:
+                logger.error(f"🚨 CUDA out of memory during model loading: {e}")
+                
+                # Emergency fallback strategy
+                if not self.use_quantization:
+                    logger.warning("🔄 Attempting emergency fallback: enabling quantization")
+                    self.use_quantization = True
+                    
+                    # Clear memory and retry with quantization
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+                    
+                    # Update model_kwargs with quantization
+                    model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True)
+                    if torch.cuda.is_available():
+                        gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                        max_memory = f"{gpu_memory_gb * 0.5:.1f}GiB"  # Even more conservative
+                        model_kwargs["max_memory"] = {0: max_memory}
+                    
+                    try:
+                        logger.info("🔄 Retrying with quantization...")
+                        self.model = self.model_class.from_pretrained(
+                            self.model_name,
+                            **model_kwargs
+                        )
+                        logger.info("✅ Quantization fallback successful")
+                    except torch.cuda.OutOfMemoryError:
+                        logger.error("❌ Even quantization failed due to insufficient memory")
+                        raise RuntimeError(
+                            "GPU memory exhausted. Please restart the runtime to clear all GPU memory, "
+                            "or use CPU mode by setting device='cpu'"
+                        )
+                else:
+                    logger.error("❌ Quantization already enabled but still out of memory")
+                    raise RuntimeError(
+                        "GPU memory exhausted even with quantization. "
+                        "Please restart the runtime or use a more powerful GPU."
+                    )
             
             # Create pipeline following official implementation
-            pipeline_kwargs = {
-                "model": self.model,
-                "model_kwargs": model_kwargs
-            }
-            
-            # Add processor or tokenizer appropriately
-            if self.is_text_only:
-                pipeline_kwargs["tokenizer"] = self.processor_or_tokenizer
-            else:
-                pipeline_kwargs["processor"] = self.processor_or_tokenizer
-            
-            logger.info(f"🔗 Creating {self.task} pipeline")
-            self.pipeline = pipeline(self.task, **pipeline_kwargs)
-            
-            # Configure generation settings following official implementation
-            self.pipeline.model.generation_config.do_sample = False  # Official setting
-            
-            logger.info("✅ MedGemma model loaded successfully")
-            
+            try:
+                pipeline_kwargs = {
+                    "model": self.model,
+                    "model_kwargs": model_kwargs
+                }
+                
+                # Add processor or tokenizer appropriately
+                if self.is_text_only:
+                    pipeline_kwargs["tokenizer"] = self.processor_or_tokenizer
+                else:
+                    pipeline_kwargs["processor"] = self.processor_or_tokenizer
+                
+                logger.info(f"🔗 Creating {self.task} pipeline")
+                self.pipeline = pipeline(self.task, **pipeline_kwargs)
+                
+                # Configure generation settings following official implementation
+                self.pipeline.model.generation_config.do_sample = False  # Official setting
+                
+                logger.info("✅ MedGemma model and pipeline initialized successfully")
+                
+            except Exception as e:
+                logger.error(f"❌ Failed to create pipeline: {e}")
+                raise
+                
         except Exception as e:
             logger.error(f"❌ Failed to load MedGemma model: {e}")
             self.model = None
