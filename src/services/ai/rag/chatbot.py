@@ -88,7 +88,7 @@ class Chatbot:
                 return "Sorry, the medical AI service is not available right now."
             
             # Step 1: Retrieve relevant medical knowledge using OpenAI embeddings
-            relevant_docs = self.retriever.get_relevant_documents(query)
+            relevant_docs = self.retriever.invoke(query)
             
             # Step 2: Combine retrieved context
             context = "\n\n".join([doc.page_content for doc in relevant_docs])

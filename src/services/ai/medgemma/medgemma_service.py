@@ -280,12 +280,22 @@ class MedGemmaService:
 
     def _generate_with_chat_template(self, messages: List[Dict[str, Any]], max_length: int) -> list:
         """Generate text using chat template with pipeline (NEW METHOD)"""
-        return self.pipeline(
-            messages,
-            max_new_tokens=max_length,
-            do_sample=False,
-            pad_token_id=self.processor_or_tokenizer.eos_token_id,
-        )
+        # Handle eos_token_id for different processor types
+        eos_token_id = None
+        if hasattr(self.processor_or_tokenizer, 'eos_token_id'):
+            eos_token_id = self.processor_or_tokenizer.eos_token_id
+        elif hasattr(self.processor_or_tokenizer, 'tokenizer') and hasattr(self.processor_or_tokenizer.tokenizer, 'eos_token_id'):
+            eos_token_id = self.processor_or_tokenizer.tokenizer.eos_token_id
+        
+        generation_kwargs = {
+            "max_new_tokens": max_length,
+            "do_sample": False,
+        }
+        
+        if eos_token_id is not None:
+            generation_kwargs["pad_token_id"] = eos_token_id
+            
+        return self.pipeline(messages, **generation_kwargs)
 
     def _construct_medical_prompt(self, query: str, context: str = "") -> str:
         """Construct a proper medical prompt for MedGemma (LEGACY METHOD - kept for fallback)"""
@@ -309,26 +319,44 @@ Important guidelines:
     
     def _generate_text(self, prompt: str, max_length: int, temperature: float) -> list:
         """Generate text using the pipeline (LEGACY METHOD - kept for fallback)"""
-        # Use official MedGemma generation parameters
-        return self.pipeline(
-            prompt,
-            max_new_tokens=300,  # Official notebook uses max_new_tokens instead of max_length
-            do_sample=False,     # Official implementation uses deterministic generation
-            pad_token_id=self.processor_or_tokenizer.eos_token_id,
-            num_return_sequences=1,
-            return_full_text=False  # Return only generated text, not full input
-        )
+        # Handle eos_token_id for different processor types
+        eos_token_id = None
+        if hasattr(self.processor_or_tokenizer, 'eos_token_id'):
+            eos_token_id = self.processor_or_tokenizer.eos_token_id
+        elif hasattr(self.processor_or_tokenizer, 'tokenizer') and hasattr(self.processor_or_tokenizer.tokenizer, 'eos_token_id'):
+            eos_token_id = self.processor_or_tokenizer.tokenizer.eos_token_id
+        
+        generation_kwargs = {
+            "max_new_tokens": 300,  # Official notebook uses max_new_tokens instead of max_length
+            "do_sample": False,     # Official implementation uses deterministic generation
+            "num_return_sequences": 1,
+            "return_full_text": False  # Return only generated text, not full input
+        }
+        
+        if eos_token_id is not None:
+            generation_kwargs["pad_token_id"] = eos_token_id
+            
+        return self.pipeline(prompt, **generation_kwargs)
     
     def _generate_multimodal_response(self, inputs: Dict[str, Any], max_length: int, temperature: float) -> Dict[str, Any]:
         """Generate multimodal response using the image-text-to-text pipeline (runs in thread pool)"""
-        # Use official MedGemma generation parameters for multimodal
-        return self.pipeline(
-            inputs,
-            max_new_tokens=300,  # Official notebook uses max_new_tokens
-            do_sample=False,     # Official implementation uses deterministic generation
-            pad_token_id=self.processor_or_tokenizer.eos_token_id,  # Updated to use processor_or_tokenizer
-            num_return_sequences=1
-        )
+        # Handle eos_token_id for different processor types
+        eos_token_id = None
+        if hasattr(self.processor_or_tokenizer, 'eos_token_id'):
+            eos_token_id = self.processor_or_tokenizer.eos_token_id
+        elif hasattr(self.processor_or_tokenizer, 'tokenizer') and hasattr(self.processor_or_tokenizer.tokenizer, 'eos_token_id'):
+            eos_token_id = self.processor_or_tokenizer.tokenizer.eos_token_id
+        
+        generation_kwargs = {
+            "max_new_tokens": 300,  # Official notebook uses max_new_tokens
+            "do_sample": False,     # Official implementation uses deterministic generation
+            "num_return_sequences": 1
+        }
+        
+        if eos_token_id is not None:
+            generation_kwargs["pad_token_id"] = eos_token_id
+            
+        return self.pipeline(inputs, **generation_kwargs)
     
     def _construct_multimodal_chat_messages(self, text_prompt: str, image: Any) -> List[Dict[str, Any]]:
         """Construct structured message list for multimodal chat template (NEW METHOD)"""
@@ -346,12 +374,22 @@ Important guidelines:
     
     def _generate_multimodal_with_chat_template(self, messages: List[Dict[str, Any]], max_length: int) -> list:
         """Generate multimodal text using chat template with pipeline (NEW METHOD)"""
-        return self.pipeline(
-            messages,
-            max_new_tokens=max_length,
-            do_sample=False,
-            pad_token_id=self.processor_or_tokenizer.eos_token_id,
-        )
+        # Handle eos_token_id for different processor types
+        eos_token_id = None
+        if hasattr(self.processor_or_tokenizer, 'eos_token_id'):
+            eos_token_id = self.processor_or_tokenizer.eos_token_id
+        elif hasattr(self.processor_or_tokenizer, 'tokenizer') and hasattr(self.processor_or_tokenizer.tokenizer, 'eos_token_id'):
+            eos_token_id = self.processor_or_tokenizer.tokenizer.eos_token_id
+        
+        generation_kwargs = {
+            "max_new_tokens": max_length,
+            "do_sample": False,
+        }
+        
+        if eos_token_id is not None:
+            generation_kwargs["pad_token_id"] = eos_token_id
+            
+        return self.pipeline(messages, **generation_kwargs)
 
     def _construct_multimodal_prompt(self, text_prompt: str) -> str:
         """Construct a proper multimodal medical prompt for MedGemma"""

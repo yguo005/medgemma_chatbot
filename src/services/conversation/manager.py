@@ -588,11 +588,10 @@ Example format:
         try:
             # Call AI service for extraction
             if hasattr(self.ai_service, 'generate_medical_response'):
-                # Use MedGemmaService directly
+                # Use MedGemmaService directly or ai_service_manager
                 ai_response = await self.ai_service.generate_medical_response(
                     query=extraction_prompt,
-                    max_length=300,
-                    temperature=0.1  # Low temperature for consistent extraction
+                    context=""
                 )
                 
                 if ai_response.get('success'):
@@ -743,8 +742,7 @@ Return ONLY the JSON object, no additional text."""
             if hasattr(self.ai_service, 'generate_medical_response'):
                 ai_response = await self.ai_service.generate_medical_response(
                     query=question_prompt,
-                    max_length=400,
-                    temperature=0.3  # Moderate creativity for question generation
+                    context=""
                 )
                 
                 if ai_response.get('success'):
@@ -905,8 +903,7 @@ OUTPUT FORMAT: Return only the plain text explanation, no additional formatting.
             if hasattr(self.ai_service, 'generate_medical_response'):
                 ai_response = await self.ai_service.generate_medical_response(
                     query=explanation_prompt,
-                    max_length=300,
-                    temperature=0.2  # Low temperature for consistent, factual responses
+                    context=""
                 )
                 
                 if ai_response.get('success'):
