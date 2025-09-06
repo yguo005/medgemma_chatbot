@@ -139,20 +139,22 @@ class MedGemmaService:
             
             # Configure model loading parameters
             model_kwargs = {
-                "trust_remote_code": True,
-                "low_cpu_mem_usage": True
+                "trust_remote_code": True
             }
+            
+            # Add low_cpu_mem_usage only when necessary (for quantized models or large deployments)
+            if self.use_quantization:
+                model_kwargs["low_cpu_mem_usage"] = True
             
             # Use torch.bfloat16 for better performance and memory efficiency
             if self.device != "cpu":
                 model_kwargs["torch_dtype"] = torch.bfloat16
-                model_kwargs["device_map"] = "auto"
             else:
                 model_kwargs["torch_dtype"] = torch.float32
             
             # Add quantization configuration if enabled
             if self.use_quantization and self.device == "cuda":
-                logger.info("🔧 Enabling 4-bit quantization for memory efficiency")
+                logger.info(" Enabling 4-bit quantization for memory efficiency")
                 model_kwargs["quantization_config"] = BitsAndBytesConfig(
                     load_in_4bit=True,
                     bnb_4bit_compute_dtype=torch.bfloat16,
@@ -160,7 +162,7 @@ class MedGemmaService:
                     bnb_4bit_quant_type="nf4",
                     llm_int8_enable_fp32_cpu_offload=True  # Enable CPU offloading for insufficient GPU memory
                 )
-                # Use a custom device map for mixed GPU/CPU deployment
+                # Use device_map for quantized models to handle mixed GPU/CPU deployment
                 model_kwargs["device_map"] = "auto"
                 model_kwargs["max_memory"] = {0: "0.8GiB", "cpu": "8GiB"}  # Adjust based on available GPU memory
             elif self.use_quantization and self.device != "cuda":
@@ -173,9 +175,13 @@ class MedGemmaService:
                 **model_kwargs
             )
             
-            # Move to device if not using device_map (for non-CUDA devices)
-            if self.device != "cuda" and not self.use_quantization:
+            # Move to device if not using Accelerate device management
+            # Only move manually if no quantization and no device_map was set
+            if not self.use_quantization and model_kwargs.get("device_map") is None:
+                logger.info(f"   Moving model to device: {self.device}")
                 self.model = self.model.to(self.device)
+            else:
+                logger.info("   Model device placement managed by Accelerate")
             
             # Create pipeline for easier inference
             pipeline_kwargs = {
@@ -188,8 +194,24 @@ class MedGemmaService:
             else:
                 pipeline_kwargs["tokenizer"] = self.processor_or_tokenizer
             
-            if not self.use_quantization:
+            # Only specify device if model is NOT managed by Accelerate
+            # Check multiple conditions to detect Accelerate usage
+            model_uses_accelerate = (
+                self.use_quantization or 
+                model_kwargs.get("device_map") is not None or
+                (hasattr(self.model, 'hf_device_map') and self.model.hf_device_map is not None) or
+                (hasattr(self.model, '_hf_hook') and self.model._hf_hook is not None)  # Additional Accelerate check
+            )
+            
+            if not model_uses_accelerate:
+                # Safe to specify device for pipeline
                 pipeline_kwargs["device"] = 0 if self.device == "cuda" else -1
+                if self.device != "cpu":
+                    pipeline_kwargs["torch_dtype"] = torch.bfloat16
+                logger.info(f"   Pipeline device set to: {pipeline_kwargs['device']}")
+            else:
+                # Model is managed by Accelerate, don't specify device
+                logger.info("   Model uses Accelerate device management, skipping pipeline device specification")
                 if self.device != "cpu":
                     pipeline_kwargs["torch_dtype"] = torch.bfloat16
             
