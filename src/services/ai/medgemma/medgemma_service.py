@@ -60,49 +60,94 @@ class MedGemmaService:
     
     def __init__(
         self, 
-        model_name: str = "google/medgemma-4b-it",  # Fixed: Use 4B instruction-tuned variant
+        model_name: str = "google/medgemma-4b-it",
         device: str = "auto",
         use_quantization: bool = False,
-        multimodal: bool = False
+        multimodal: Optional[bool] = None  # Auto-detect from model name if None
     ):
         """
-        Initialize MedGemma service
+        Initialize MedGemma service following official Google implementation
         
         Args:
-            model_name: HuggingFace model identifier for MedGemma
-            device: Device to run the model on ("auto", "cpu", "cuda")
+            model_name: HuggingFace model identifier for MedGemma (e.g., "google/medgemma-4b-it")
+            device: Device to run the model on ("auto", "cpu", "cuda") 
             use_quantization: Enable 4-bit quantization for memory efficiency
-            multimodal: Use multimodal variant for image-text-to-text tasks
+            multimodal: Use multimodal variant (auto-detected from model name if None)
         """
         self.model_name = model_name
         self.device = self._determine_device(device)
         self.use_quantization = use_quantization
-        self.multimodal = multimodal
-        self.model = None
-        self.processor_or_tokenizer = None  # Use unified attribute for processor/tokenizer
-        self.pipeline = None
-        self.executor = ThreadPoolExecutor(max_workers=2)  # For async operations
         
-        # Determine the appropriate task and model class
-        # Disable multimodal if not available in current transformers version
-        if multimodal and not MULTIMODAL_AVAILABLE:
-            logger.warning(" Multimodal requested but not available. Falling back to text-only mode.")
-            multimodal = False
+        # Auto-detect model variant and capabilities (following official notebook)
+        self.model_variant = self._extract_model_variant(model_name)
+        self.is_text_only = "text" in self.model_variant
+        
+        # Auto-detect multimodal capability if not specified
+        if multimodal is None:
+            self.multimodal = not self.is_text_only
+        else:
+            self.multimodal = multimodal and not self.is_text_only
+        
+        # Validate multimodal availability
+        if self.multimodal and not MULTIMODAL_AVAILABLE:
+            logger.warning("🔄 Multimodal requested but not available. Falling back to text-only mode.")
             self.multimodal = False
         
-        self.task = "image-text-to-text" if multimodal else "text-generation"
-        self.model_class = AutoModelForImageTextToText if (multimodal and MULTIMODAL_AVAILABLE) else AutoModelForCausalLM
+        # Set task and model class following official implementation
+        self.task = "image-text-to-text" if self.multimodal else "text-generation"
+        self.model_class = AutoModelForImageTextToText if self.multimodal else AutoModelForCausalLM
+        
+        # Initialize model components
+        self.model = None
+        self.processor_or_tokenizer = None
+        self.pipeline = None
+        self.executor = ThreadPoolExecutor(max_workers=2)
+        
+        # Validate system requirements before loading (following official memory checks)
+        self._validate_system_requirements()
         
         # Check if pipeline is available
         if not PIPELINE_AVAILABLE:
-            logger.error(" transformers.pipeline not available. MedGemma service disabled.")
+            logger.error("❌ transformers.pipeline not available. MedGemma service disabled.")
             self.model = None
             self.processor_or_tokenizer = None
             self.pipeline = None
             return
         
-        # Initialize the model
+        # Initialize the model following official implementation
         self._initialize_model()
+
+    def _extract_model_variant(self, model_name: str) -> str:
+        """Extract model variant from model name (following official notebook)"""
+        # Extract variant from model name (e.g., "google/medgemma-4b-it" -> "4b-it")
+        if "/" in model_name:
+            model_part = model_name.split("/")[-1]
+            if "medgemma-" in model_part:
+                return model_part.replace("medgemma-", "")
+        return "4b-it"  # Default variant
+
+    def _validate_system_requirements(self):
+        """Validate system requirements following official notebook guidelines"""
+        google_colab = "google.colab" in __import__('sys').modules
+        
+        if "27b" in self.model_variant and google_colab:
+            if torch.cuda.is_available():
+                device_name = torch.cuda.get_device_name(0)
+                if not ("A100" in device_name and self.use_quantization):
+                    logger.warning(
+                        "⚠️ Runtime may have insufficient memory for 27B variant. "
+                        "Recommend A100 GPU with quantization enabled."
+                    )
+            else:
+                logger.warning("⚠️ 27B variant requires GPU acceleration for optimal performance.")
+        
+        logger.info(f"📋 Model Configuration:")
+        logger.info(f"   Model: {self.model_name}")
+        logger.info(f"   Variant: {self.model_variant}")
+        logger.info(f"   Text-only: {self.is_text_only}")
+        logger.info(f"   Multimodal: {self.multimodal}")
+        logger.info(f"   Device: {self.device}")
+        logger.info(f"   Quantization: {self.use_quantization}")
     
     def _determine_device(self, device: str) -> str:
         """Determine the best device to use"""
@@ -123,7 +168,64 @@ class MedGemmaService:
             logger.info(" GPU memory cache cleared")
     
     def _initialize_model(self):
-        """Initialize the MedGemma model and tokenizer with improved configuration"""
+        """Initialize MedGemma model following official Google implementation"""
+        try:
+            logger.info(f"🚀 Loading MedGemma model: {self.model_name}")
+            
+            # Configure model loading parameters following official notebook
+            model_kwargs = {
+                "torch_dtype": torch.bfloat16,  # Official uses bfloat16, not float16
+                "device_map": "auto",           # Official always uses device_map="auto"
+            }
+            
+            # Add quantization configuration if enabled (following official BitsAndBytesConfig)
+            if self.use_quantization:
+                logger.info("⚡ Enabling 4-bit quantization following official configuration")
+                model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True  # Official configuration
+                )
+            
+            # Load processor or tokenizer based on model variant (following official logic)
+            if self.is_text_only:
+                logger.info("📝 Loading AutoTokenizer for text-only variant")
+                self.processor_or_tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            else:
+                logger.info("🖼️ Loading AutoProcessor for multimodal variant")
+                self.processor_or_tokenizer = AutoProcessor.from_pretrained(self.model_name)
+            
+            # Load model with appropriate class (following official implementation)
+            logger.info(f"🔧 Loading model with {self.model_class.__name__}")
+            self.model = self.model_class.from_pretrained(
+                self.model_name,
+                **model_kwargs
+            )
+            
+            # Create pipeline following official implementation
+            pipeline_kwargs = {
+                "model": self.model,
+                "model_kwargs": model_kwargs
+            }
+            
+            # Add processor or tokenizer appropriately
+            if self.is_text_only:
+                pipeline_kwargs["tokenizer"] = self.processor_or_tokenizer
+            else:
+                pipeline_kwargs["processor"] = self.processor_or_tokenizer
+            
+            logger.info(f"🔗 Creating {self.task} pipeline")
+            self.pipeline = pipeline(self.task, **pipeline_kwargs)
+            
+            # Configure generation settings following official implementation
+            self.pipeline.model.generation_config.do_sample = False  # Official setting
+            
+            logger.info("✅ MedGemma model loaded successfully")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to load MedGemma model: {e}")
+            self.model = None
+            self.processor_or_tokenizer = None
+            self.pipeline = None
+            raise
         try:
             logger.info(f" Loading MedGemma model: {self.model_name}")
             logger.info(f" Using device: {self.device}")
@@ -321,17 +423,17 @@ class MedGemmaService:
         self, 
         query: str, 
         context: str = "", 
-        max_length: int = 512,
-        temperature: float = 0.3
+        max_new_tokens: int = 300,  # Changed from max_length to max_new_tokens (official)
+        **kwargs  # Accept additional parameters but ignore temperature (not used in official)
     ) -> Dict[str, Any]:
         """
-        Generate medical response using MedGemma
+        Generate medical response using MedGemma following official implementation
         
         Args:
             query: User's medical question
             context: Additional context (symptoms, history, etc.)
-            max_length: Maximum response length
-            temperature: Sampling temperature (lower = more conservative)
+            max_new_tokens: Maximum new tokens to generate (following official implementation)
+            **kwargs: Additional parameters (for compatibility)
         
         Returns:
             Dict containing the response and metadata
@@ -344,34 +446,41 @@ class MedGemmaService:
             }
         
         try:
-            # Construct chat messages using modern chat template format
+            # Construct chat messages using official format
             messages = self._construct_chat_messages(query, context)
+            
+            # Set max_new_tokens based on model variant (following official implementation)
+            if "27b" in self.model_variant:
+                max_new_tokens = min(max_new_tokens, 1500)  # Official max for 27B
+            else:
+                max_new_tokens = min(max_new_tokens, 500)   # Official max for 4B
             
             # Run inference in thread pool to avoid blocking
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(
                 self.executor,
-                self._generate_with_chat_template,
+                self._generate_with_pipeline,
                 messages,
-                max_length
+                max_new_tokens
             )
             
-            # Extract the response from chat template output
+            # Extract the response from pipeline output (following official format)
             response = result[0]["generated_text"][-1]["content"]
             
-            logger.info(" MedGemma response generated successfully")
+            logger.info("✅ MedGemma response generated successfully")
             
             return {
                 "success": True,
                 "response": response,
                 "model_used": self.model_name,
+                "model_variant": self.model_variant,
                 "device": self.device,
-                "prompt_length": len(str(messages)),  # Approximate length of messages
+                "max_new_tokens": max_new_tokens,
                 "response_length": len(response)
             }
             
         except Exception as e:
-            logger.error(f" MedGemma generation failed: {e}")
+            logger.error(f"❌ MedGemma generation failed: {e}")
             return {
                 "success": False,
                 "response": "I apologize, but I'm having trouble processing your medical query right now. Please consult with a healthcare professional.",
@@ -393,23 +502,15 @@ class MedGemmaService:
             {"role": "user", "content": user_content}
         ]
 
-    def _generate_with_chat_template(self, messages: List[Dict[str, Any]], max_length: int) -> list:
-        """Generate text using chat template with pipeline (NEW METHOD)"""
-        # Handle eos_token_id for different processor types
-        eos_token_id = None
-        if hasattr(self.processor_or_tokenizer, 'eos_token_id'):
-            eos_token_id = self.processor_or_tokenizer.eos_token_id
-        elif hasattr(self.processor_or_tokenizer, 'tokenizer') and hasattr(self.processor_or_tokenizer.tokenizer, 'eos_token_id'):
-            eos_token_id = self.processor_or_tokenizer.tokenizer.eos_token_id
-        
+    def _generate_with_pipeline(self, messages: List[Dict[str, Any]], max_new_tokens: int) -> list:
+        """Generate text using pipeline following official implementation"""
+        # Generation parameters following official notebook
         generation_kwargs = {
-            "max_new_tokens": max_length,
-            "do_sample": False,
+            "max_new_tokens": max_new_tokens,  # Official uses max_new_tokens
+            "do_sample": False,                # Official uses deterministic generation
         }
         
-        if eos_token_id is not None:
-            generation_kwargs["pad_token_id"] = eos_token_id
-            
+        # Run pipeline with official parameters
         return self.pipeline(messages, **generation_kwargs)
 
     def _construct_medical_prompt(self, query: str, context: str = "") -> str:
@@ -716,6 +817,8 @@ Important guidelines:
         """Get information about the loaded model and its capabilities"""
         return {
             "model_name": self.model_name,
+            "model_variant": getattr(self, 'model_variant', 'unknown'),
+            "text_only": getattr(self, 'is_text_only', False),
             "device": self.device,
             "model_loaded": self.model is not None,
             "tokenizer_loaded": self.processor_or_tokenizer is not None,
@@ -724,14 +827,15 @@ Important guidelines:
             "multimodal_enabled": self.multimodal,
             "quantization_enabled": self.use_quantization,
             "model_class": self.model_class.__name__ if self.model_class else None,
-            "torch_dtype": "bfloat16" if self.device != "cpu" else "float32",
+            "torch_dtype": "bfloat16",  # Following official implementation
             "cuda_available": torch.cuda.is_available(),
             "mps_available": torch.backends.mps.is_available() if hasattr(torch.backends, 'mps') else False,
             "capabilities": {
                 "text_generation": True,
                 "image_analysis": self.multimodal,
                 "memory_efficient": self.use_quantization,
-                "async_processing": True
+                "async_processing": True,
+                "official_implementation": True  # New flag
             }
         }
     
