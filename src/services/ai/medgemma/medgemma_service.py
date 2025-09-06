@@ -115,6 +115,13 @@ class MedGemmaService:
                 return "cpu"
         return device
     
+    def _clear_gpu_memory(self):
+        """Clear GPU memory to free up space"""
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            logger.info(" GPU memory cache cleared")
+    
     def _initialize_model(self):
         """Initialize the MedGemma model and tokenizer with improved configuration"""
         try:
@@ -122,6 +129,23 @@ class MedGemmaService:
             logger.info(f" Using device: {self.device}")
             logger.info(f" Quantization: {'Enabled' if self.use_quantization else 'Disabled'}")
             logger.info(f" Multimodal: {'Enabled' if self.multimodal else 'Disabled'}")
+            
+            # Check GPU memory before proceeding
+            if self.device == "cuda" and torch.cuda.is_available():
+                gpu_memory = torch.cuda.get_device_properties(0).total_memory / (1024**3)  # GB
+                gpu_allocated = torch.cuda.memory_allocated(0) / (1024**3)  # GB
+                gpu_free = gpu_memory - gpu_allocated
+                logger.info(f" GPU Memory - Total: {gpu_memory:.2f}GB, Allocated: {gpu_allocated:.2f}GB, Free: {gpu_free:.2f}GB")
+                
+                # If less than 3GB free, force quantization or CPU mode
+                if gpu_free < 3.0:
+                    logger.warning(f" Low GPU memory ({gpu_free:.2f}GB free). Auto-enabling solutions...")
+                    if not self.use_quantization:
+                        logger.info(" Auto-enabling quantization to reduce memory usage")
+                        self.use_quantization = True
+                    if gpu_free < 1.0:  # Very low memory, force CPU
+                        logger.warning(" Very low GPU memory. Switching to CPU mode")
+                        self.device = "cpu"
             
             # Load processor for multimodal or tokenizer for text-only
             if self.multimodal and MULTIMODAL_AVAILABLE:
@@ -139,12 +163,9 @@ class MedGemmaService:
             
             # Configure model loading parameters
             model_kwargs = {
-                "trust_remote_code": True
+                "trust_remote_code": True,
+                "low_cpu_mem_usage": True
             }
-            
-            # Add low_cpu_mem_usage only when necessary (for quantized models or large deployments)
-            if self.use_quantization:
-                model_kwargs["low_cpu_mem_usage"] = True
             
             # Use torch.bfloat16 for better performance and memory efficiency
             if self.device != "cpu":
@@ -162,18 +183,88 @@ class MedGemmaService:
                     bnb_4bit_quant_type="nf4",
                     llm_int8_enable_fp32_cpu_offload=True  # Enable CPU offloading for insufficient GPU memory
                 )
-                # Use device_map for quantized models to handle mixed GPU/CPU deployment
+                # Use aggressive memory mapping for limited GPU memory
                 model_kwargs["device_map"] = "auto"
-                model_kwargs["max_memory"] = {0: "0.8GiB", "cpu": "8GiB"}  # Adjust based on available GPU memory
+                
+                # Calculate available GPU memory and set conservative limits
+                if torch.cuda.is_available():
+                    gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                    # Use only 70% of total GPU memory to leave room for other operations
+                    max_gpu_memory = f"{gpu_memory_gb * 0.7:.1f}GiB"
+                    model_kwargs["max_memory"] = {0: max_gpu_memory, "cpu": "8GiB"}
+                    logger.info(f" Setting max GPU memory to {max_gpu_memory}")
+                
             elif self.use_quantization and self.device != "cuda":
                 logger.warning(" Quantization is only supported on CUDA devices. Disabling quantization.")
                 self.use_quantization = False
             
-            # Load the appropriate model class
-            self.model = self.model_class.from_pretrained(
-                self.model_name,
-                **model_kwargs
-            )
+            # Clear GPU memory before loading
+            self._clear_gpu_memory()
+            
+            # Load the appropriate model class with retry logic
+            try:
+                logger.info(" Attempting to load model...")
+                self.model = self.model_class.from_pretrained(
+                    self.model_name,
+                    **model_kwargs
+                )
+                logger.info(" Model loaded successfully")
+                
+            except torch.cuda.OutOfMemoryError as e:
+                logger.error(f" CUDA out of memory during model loading: {e}")
+                self._clear_gpu_memory()
+                
+                # Try with quantization if not already enabled
+                if not self.use_quantization and self.device == "cuda":
+                    logger.info(" Retrying with quantization enabled...")
+                    self.use_quantization = True
+                    model_kwargs["quantization_config"] = BitsAndBytesConfig(
+                        load_in_4bit=True,
+                        bnb_4bit_compute_dtype=torch.bfloat16,
+                        bnb_4bit_use_double_quant=True,
+                        bnb_4bit_quant_type="nf4",
+                        llm_int8_enable_fp32_cpu_offload=True
+                    )
+                    model_kwargs["device_map"] = "auto"
+                    model_kwargs["max_memory"] = {0: "1.0GiB", "cpu": "8GiB"}  # Very conservative
+                    
+                    try:
+                        self.model = self.model_class.from_pretrained(
+                            self.model_name,
+                            **model_kwargs
+                        )
+                        logger.info(" Model loaded successfully with quantization")
+                    except Exception as e2:
+                        logger.error(f" Failed with quantization: {e2}")
+                        # Fall back to CPU
+                        logger.info(" Falling back to CPU mode...")
+                        self.device = "cpu"
+                        model_kwargs = {
+                            "trust_remote_code": True,
+                            "torch_dtype": torch.float32,
+                            "low_cpu_mem_usage": True
+                        }
+                        self.use_quantization = False
+                        self.model = self.model_class.from_pretrained(
+                            self.model_name,
+                            **model_kwargs
+                        )
+                        logger.info(" Model loaded successfully on CPU")
+                else:
+                    # Already using quantization or not on CUDA, fall back to CPU
+                    logger.info(" Falling back to CPU mode...")
+                    self.device = "cpu"
+                    model_kwargs = {
+                        "trust_remote_code": True,
+                        "torch_dtype": torch.float32,
+                        "low_cpu_mem_usage": True
+                    }
+                    self.use_quantization = False
+                    self.model = self.model_class.from_pretrained(
+                        self.model_name,
+                        **model_kwargs
+                    )
+                    logger.info(" Model loaded successfully on CPU")
             
             # Move to device if not using Accelerate device management
             # Only move manually if no quantization and no device_map was set
@@ -195,12 +286,11 @@ class MedGemmaService:
                 pipeline_kwargs["tokenizer"] = self.processor_or_tokenizer
             
             # Only specify device if model is NOT managed by Accelerate
-            # Check multiple conditions to detect Accelerate usage
+            # (i.e., no quantization AND no device_map="auto")
             model_uses_accelerate = (
                 self.use_quantization or 
-                model_kwargs.get("device_map") is not None or
                 (hasattr(self.model, 'hf_device_map') and self.model.hf_device_map is not None) or
-                (hasattr(self.model, '_hf_hook') and self.model._hf_hook is not None)  # Additional Accelerate check
+                model_kwargs.get("device_map") == "auto"
             )
             
             if not model_uses_accelerate:
@@ -208,7 +298,6 @@ class MedGemmaService:
                 pipeline_kwargs["device"] = 0 if self.device == "cuda" else -1
                 if self.device != "cpu":
                     pipeline_kwargs["torch_dtype"] = torch.bfloat16
-                logger.info(f"   Pipeline device set to: {pipeline_kwargs['device']}")
             else:
                 # Model is managed by Accelerate, don't specify device
                 logger.info("   Model uses Accelerate device management, skipping pipeline device specification")
