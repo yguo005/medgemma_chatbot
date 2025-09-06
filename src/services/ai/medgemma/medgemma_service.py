@@ -80,21 +80,51 @@ class MedGemmaService:
             
             # Add quantization if requested (following official pattern)
             if self.use_quantization:
-                model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True)
+                try:
+                    model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True)
+                    logger.info("   ✅ Quantization config created successfully")
+                except ImportError as e:
+                    logger.warning(f"   ⚠️  Quantization failed, falling back to non-quantized: {e}")
+                    self.use_quantization = False  # Update the flag
             
             # Create pipeline (following official implementation)
-            self.pipeline = pipeline(self.task, model=self.model_name, model_kwargs=model_kwargs)
+            try:
+                self.pipeline = pipeline(self.task, model=self.model_name, model_kwargs=model_kwargs)
+            except Exception as e:
+                if "bitsandbytes" in str(e) and self.use_quantization:
+                    logger.warning("   🔄 Quantization failed, retrying without quantization...")
+                    # Remove quantization and retry
+                    model_kwargs.pop("quantization_config", None)
+                    self.use_quantization = False
+                    self.pipeline = pipeline(self.task, model=self.model_name, model_kwargs=model_kwargs)
+                else:
+                    raise
             
             # Set generation config (following official notebook)
             self.pipeline.model.generation_config.do_sample = False
             
             # Load model and processor/tokenizer directly for advanced usage
-            if self.is_text_only:
-                self.model = AutoModelForCausalLM.from_pretrained(self.model_name, **model_kwargs)
-                self.processor_or_tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-            else:
-                self.model = AutoModelForImageTextToText.from_pretrained(self.model_name, **model_kwargs)
-                self.processor_or_tokenizer = AutoProcessor.from_pretrained(self.model_name)
+            try:
+                if self.is_text_only:
+                    self.model = AutoModelForCausalLM.from_pretrained(self.model_name, **model_kwargs)
+                    self.processor_or_tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+                else:
+                    self.model = AutoModelForImageTextToText.from_pretrained(self.model_name, **model_kwargs)
+                    self.processor_or_tokenizer = AutoProcessor.from_pretrained(self.model_name)
+            except Exception as e:
+                if "bitsandbytes" in str(e) and "quantization_config" in model_kwargs:
+                    logger.warning("   🔄 Direct model loading failed with quantization, retrying without...")
+                    # Remove quantization and retry direct model loading
+                    model_kwargs.pop("quantization_config", None)
+                    self.use_quantization = False
+                    if self.is_text_only:
+                        self.model = AutoModelForCausalLM.from_pretrained(self.model_name, **model_kwargs)
+                        self.processor_or_tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+                    else:
+                        self.model = AutoModelForImageTextToText.from_pretrained(self.model_name, **model_kwargs)
+                        self.processor_or_tokenizer = AutoProcessor.from_pretrained(self.model_name)
+                else:
+                    raise
             
             logger.info("✅ MedGemma model loaded successfully")
             
