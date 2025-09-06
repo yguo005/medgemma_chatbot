@@ -8,69 +8,66 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 # Import modules from new structure
-from src.services.ai.rag.chatbot import Chatbot
 from src.services.conversation.manager import ConversationManager
-from services.ai.openai_services import AIServices
-from src.services.safety.safety_guardrails import MedicalSafetyGuardrails
-
-# Import optimized AI service manager
 from src.services.ai.ai_service_manager import create_ai_service_manager
+from src.services.safety.safety_guardrails import MedicalSafetyGuardrails
+# RAG service for dynamic question generation
+from src.services.ai.rag.chatbot import Chatbot
 
 import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Load configuration from environment
+# --- Environment and Configuration ---
+AI_SERVICE_MODE = os.getenv("AI_SERVICE_MODE", "hybrid")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 USE_MEDGEMMA_GARDEN = os.getenv("USE_MEDGEMMA_GARDEN", "false").lower() == "true"
 GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID")
 MEDGEMMA_ENDPOINT_ID = os.getenv("MEDGEMMA_ENDPOINT_ID")
 
-# New: AI Service Manager configuration
-AI_SERVICE_MODE = os.getenv("AI_SERVICE_MODE", "hybrid")  # hybrid, local_demo, cloud_first
-
-# Initialize safety guardrails first
-safety_guardrails = MedicalSafetyGuardrails()
-
-# Initialize all services
+# --- Service Initialization ---
 try:
-    # Initialize chatbot with proper MedGemma integration
-    chatbot = Chatbot(
+    logger.info(f"Initializing services in '{AI_SERVICE_MODE}' mode...")
+
+    # 1. Initialize the AI Service Manager (handles MedGemma logic)
+    # This is the primary interface for generating medical responses.
+    ai_service_manager = create_ai_service_manager(AI_SERVICE_MODE)
+    logger.info(" AI Service Manager initialized.")
+
+    # 2. Initialize the RAG service (for knowledge base lookups)
+    # This is used for dynamic, context-aware question generation.
+    rag_service = Chatbot(
         openai_api_key=OPENAI_API_KEY,
         use_medgemma_garden=USE_MEDGEMMA_GARDEN,
         gcp_project_id=GCP_PROJECT_ID,
         endpoint_id=MEDGEMMA_ENDPOINT_ID
     )
-    
-    ai_services = AIServices(
-        api_key=OPENAI_API_KEY, 
-        use_medgemma=USE_MEDGEMMA_GARDEN,
-        gcp_project_id=GCP_PROJECT_ID
-    )
-    
-    # Initialize optimized AI service manager (new approach)
-    ai_service_manager = create_ai_service_manager(AI_SERVICE_MODE)
-    
-    # Initialize conversation manager with both AI service and RAG service for full functionality
-    # Phase 1: AI for Symptom Understanding + Phase 2: RAG for Dynamic Question Generation
+    logger.info(" RAG Service (Chatbot) initialized.")
+
+    # 3. Initialize the Conversation Manager
+    # This orchestrates the conversation flow, using the AI and RAG services.
     conversation_manager = ConversationManager(
         ai_service=ai_service_manager,
-        rag_service=chatbot  # Enable RAG-powered dynamic question generation
+        rag_service=rag_service
     )
-    
-    if USE_MEDGEMMA_GARDEN:
-        logger.info(f" MedGemma 4B Model Garden integration enabled (Project: {GCP_PROJECT_ID})")
-    else:
-        logger.info(" Using MedGemma 4B local + RAG architecture")
-    
-    logger.info(" All services initialized successfully with safety guardrails.")
-    
+    logger.info(" Conversation Manager initialized.")
+
+    # 4. Initialize Safety Guardrails
+    safety_guardrails = MedicalSafetyGuardrails()
+    logger.info(" Medical Safety Guardrails initialized.")
+
+    logger.info(" All services initialized successfully!")
+
 except Exception as e:
-    logger.error(f" Failed to initialize services: {e}")
-    chatbot = None
-    conversation_manager = None
-    ai_services = None
+    logger.critical(f" CRITICAL: Failed to initialize services. The application will not work correctly.")
+    logger.critical(f"Error: {e}")
+    # Print the full stack trace for detailed debugging
+    traceback.print_exc()
+    # Set services to None to prevent the app from starting in a broken state
     ai_service_manager = None
+    rag_service = None
+    conversation_manager = None
+    safety_guardrails = None
 
 app = FastAPI(
     title="AI Health Consultant API", 
@@ -129,7 +126,7 @@ async def chat(query_request: QueryRequest):
         response = await conversation_manager.process_message(session_id, query_text, is_choice)
         
         # Step 3: Enhanced diagnosis with MedGemma + RAG + Safety
-        if response.get('response_type') == 'diagnostic' and chatbot:
+        if response.get('response_type') == 'diagnostic' and rag_service:
             try:
                 session = conversation_manager.get_session(session_id)
                 collected_data = session['collected_data']
@@ -146,7 +143,7 @@ async def chat(query_request: QueryRequest):
                 """
                 
                 # Get enhanced response using MedGemma + RAG
-                enhanced_response = await chatbot.get_response(medical_query)
+                enhanced_response = await rag_service.get_response(medical_query)
                 
                 # Apply safety validation to the AI response
                 safety_validation = safety_guardrails.validate_response(enhanced_response)
@@ -208,153 +205,160 @@ async def chat(query_request: QueryRequest):
         raise HTTPException(status_code=500, detail="An internal error occurred.")
 
 @app.post("/analyze_image")
-async def analyze_image(request: ImageAnalysisRequest):
-    """Enhanced image analysis with safety guardrails using optimized service manager."""
-    if not conversation_manager or not safety_guardrails:
-        raise HTTPException(status_code=500, detail="Required services not initialized.")
+async def analyze_image(
+    session_id: str = Form(...), 
+    image: UploadFile = File(...)
+):
+    """
+    Analyzes a medical image, validates the analysis for safety, and integrates
+    it into the conversation.
+    """
+    if not conversation_manager or not safety_guardrails or not ai_service_manager:
+        logger.error("A required service is not initialized. Cannot process image.")
+        raise HTTPException(status_code=500, detail="Core services not available.")
 
     try:
-        session_id = request.session_id
-        image_data = request.image_data
-        filename = request.filename
+        logger.info(f"Session {session_id}: Received image for analysis: {image.filename}")
 
-        logger.info(f" Session {session_id}: Analyzing image {filename}")
+        # Read image data
+        image_data = await image.read()
 
-        # Use optimized service manager for image analysis (tries MedGemma first, then OpenAI)
-        if ai_service_manager:
-            analysis_result = await ai_service_manager.analyze_image(image_data, context="medical")
-            service_used = analysis_result.get("service_used", "unknown")
-            logger.info(f" Image analysis service used: {service_used}")
-        else:
-            # Fallback to old openai_services if ai_service_manager failed to initialize
-            logger.warning(" Using fallback openai_services for image analysis")
-            analysis_result = await ai_services.analyze_image(image_data, context="medical")
+        # Use the AI Service Manager for image analysis
+        analysis_result = await ai_service_manager.analyze_image(image_data, context="medical")
+        service_used = analysis_result.get("service_used", "unknown")
+        logger.info(f"Image analysis performed by: {service_used}")
+
+        if not analysis_result.get("success"):
+            error_msg = analysis_result.get('error', 'Unknown error during image analysis.')
+            logger.error(f"Session {session_id}: Image analysis failed. Reason: {error_msg}")
+            raise HTTPException(status_code=500, detail=f"Image analysis failed: {error_msg}")
+
+        analysis_text = analysis_result["analysis"]
         
-        if analysis_result["success"]:
-            analysis_text = analysis_result["analysis"]
-            
-            # Safety check on image analysis result
-            safety_result = safety_guardrails.process_user_input(analysis_text)
-            
-            if safety_result["should_block"]:
-                # Handle emergency situations detected in image
-                return {
-                    "response_type": "emergency",
-                    "response": safety_result["emergency_response"],
-                    "session_id": session_id
-                }
-            
-            # Apply response safety validation
-            safety_validation = safety_guardrails.validate_response(analysis_text)
-            final_analysis = safety_validation["filtered_response"]
-            
-            logger.info(f" Session {session_id}: Image analysis successful and validated")
-        else:
-            final_analysis = analysis_result["analysis"]  # Fallback message
-            logger.warning(f" Session {session_id}: Image analysis failed - {analysis_result.get('error', 'Unknown error')}")
+        # --- Safety Guardrails ---
+        # 1. Check for immediate emergencies in the analysis text
+        safety_check = safety_guardrails.process_user_input(analysis_text)
+        if safety_check["should_block"]:
+            logger.warning(f"Session {session_id}: Emergency detected in image analysis. Blocking response.")
+            return {
+                "response_type": "emergency",
+                "response": safety_check["emergency_response"],
+                "session_id": session_id
+            }
         
+        # 2. Validate and filter the AI-generated analysis for safety
+        safety_validation = safety_guardrails.validate_response(analysis_text)
+        final_analysis = safety_validation["filtered_response"]
+        
+        logger.info(f"Session {session_id}: Image analysis successful and safety-validated.")
+        
+        # Integrate the validated analysis into the conversation state
         response = conversation_manager.process_image_analysis(session_id, final_analysis)
         
-        logger.info(f" Session {session_id}: Image analysis response sent")
+        logger.info(f"Session {session_id}: Image analysis response sent to user.")
         return response
 
     except Exception as e:
-        error_message = f" Image Analysis Error: {str(e)}\n{traceback.format_exc()}"
-        logger.error(error_message)
+        logger.critical(f"CRITICAL ERROR in /analyze_image: {e}", exc_info=True)
+        # Provide a safe, generic error response
         try:
-            fallback_response = conversation_manager.process_image_analysis(
-                request.session_id, 
-                "I'm sorry, I couldn't analyze the image at the moment. Please try describing your symptoms in text or consult with a healthcare professional."
+            return conversation_manager.process_image_analysis(
+                session_id, 
+                "I'm sorry, I encountered a problem while analyzing the image. Please describe your symptoms in text."
             )
-            return fallback_response
-        except:
-            raise HTTPException(status_code=500, detail="An internal error occurred.")
+        except Exception as fallback_e:
+            logger.error(f"Fallback response in /analyze_image also failed: {fallback_e}")
+            raise HTTPException(status_code=500, detail="An critical internal error occurred.")
 
 @app.post("/transcribe")
 async def transcribe_audio(session_id: str = Form(...), audio: UploadFile = File(...)):
-    """Enhanced audio transcription with safety guardrails using optimized service manager."""
-    if not conversation_manager or not safety_guardrails:
-        raise HTTPException(status_code=500, detail="Required services not initialized.")
+    """
+    Transcribes an audio file, validates the content for safety, and integrates
+    it into the conversation.
+    """
+    if not conversation_manager or not safety_guardrails or not ai_service_manager:
+        logger.error("A required service is not initialized. Cannot process audio.")
+        raise HTTPException(status_code=500, detail="Core services not available.")
 
     try:
-        logger.info(f" Session {session_id}: Transcribing audio file: {audio.filename}")
+        logger.info(f"Session {session_id}: Received audio for transcription: {audio.filename}")
 
         audio_content = await audio.read()
         
-        # Use optimized service manager for audio transcription (OpenAI Whisper only)
-        if ai_service_manager:
-            transcription_result = await ai_service_manager.transcribe_audio(audio_content, audio.filename or "audio.wav")
-        else:
-            # Fallback to old ai_services if ai_service_manager failed to initialize
-            logger.warning(" Using fallback openai_services for audio transcription")
-            transcription_result = await ai_services.transcribe_audio(audio_content, audio.filename or "audio.wav")
+        # Use the AI Service Manager for transcription
+        transcription_result = await ai_service_manager.transcribe_audio(
+            audio_content, 
+            audio.filename or "audio.wav"
+        )
         
-        if transcription_result["success"]:
-            transcription_text = transcription_result["transcription"]
-            
-            # Safety check on transcription
-            safety_result = safety_guardrails.process_user_input(transcription_text)
-            
-            if safety_result["should_block"]:
-                return {
-                    "response_type": "emergency", 
-                    "response": safety_result["emergency_response"],
-                    "session_id": session_id
-                }
-            
-            logger.info(f" Session {session_id}: Audio transcription successful and validated")
+        if not transcription_result["success"]:
+            error_msg = transcription_result.get('error', 'Unknown error during transcription.')
+            logger.error(f"Session {session_id}: Audio transcription failed. Reason: {error_msg}")
+            # Still, we can process the partial or error message
+            transcription_text = transcription_result.get("transcription", "")
         else:
             transcription_text = transcription_result["transcription"]
-            logger.warning(f" Session {session_id}: Audio transcription failed")
+
+        # --- Safety Guardrails ---
+        safety_check = safety_guardrails.process_user_input(transcription_text)
+        if safety_check["should_block"]:
+            logger.warning(f"Session {session_id}: Emergency detected in audio. Blocking response.")
+            return {
+                "response_type": "emergency", 
+                "response": safety_check["emergency_response"],
+                "session_id": session_id
+            }
         
+        logger.info(f"Session {session_id}: Audio transcribed and safety-validated.")
+        
+        # Integrate the transcription into the conversation
         response = conversation_manager.process_voice_transcription(session_id, transcription_text)
         
-        logger.info(f"📤 Session {session_id}: Audio transcription response sent")
+        logger.info(f"Session {session_id}: Audio transcription response sent.")
         return response
 
     except Exception as e:
-        error_message = f" Transcription Error: {str(e)}\n{traceback.format_exc()}"
-        logger.error(error_message)
+        logger.critical(f"CRITICAL ERROR in /transcribe: {e}", exc_info=True)
         try:
-            fallback_response = conversation_manager.process_voice_transcription(
+            return conversation_manager.process_voice_transcription(
                 session_id, 
-                "I'm sorry, I couldn't transcribe the audio. Please try typing your message instead or speak with a healthcare professional directly."
+                "I'm sorry, I couldn't process the audio. Please try typing your message."
             )
-            return fallback_response
-        except:
-            raise HTTPException(status_code=500, detail="An internal error occurred.")
+        except Exception as fallback_e:
+            logger.error(f"Fallback response in /transcribe also failed: {fallback_e}")
+            raise HTTPException(status_code=500, detail="An critical internal error occurred.")
 
 @app.get("/health")
 async def health_check():
-    """Enhanced health check including safety systems and optimized service manager."""
+    """Provides a detailed health check of all critical services."""
+    
+    # Base status
     status = {
         "api_status": "healthy",
-        "chatbot_initialized": chatbot is not None,
-        "conversation_manager_initialized": conversation_manager is not None,
-        "ai_services_initialized": ai_services is not None,
-        "ai_service_manager_initialized": ai_service_manager is not None,
-        "safety_guardrails_initialized": safety_guardrails is not None,
-        "medgemma_garden_enabled": USE_MEDGEMMA_GARDEN,
         "ai_service_mode": AI_SERVICE_MODE,
-        "architecture": "MedGemma + RAG + Safety Guardrails + Phase 3 Final Explanations"
+        "architecture": "MedGemma + RAG + Safety Guardrails"
     }
-    
-    # Add detailed service manager status if available
+
+    # Service initialization status
+    status["ai_service_manager_initialized"] = ai_service_manager is not None
+    status["rag_service_initialized"] = rag_service is not None
+    status["conversation_manager_initialized"] = conversation_manager is not None
+    status["safety_guardrails_initialized"] = safety_guardrails is not None
+
+    # Detailed status from AI Service Manager
     if ai_service_manager:
         service_status = ai_service_manager.get_service_status()
         status.update({
             "service_manager_details": service_status,
-            "image_analysis_available": service_status["image_analysis_available"],
-            "audio_transcription_available": service_status["audio_transcription_available"],
-            "text_generation_available": service_status["text_generation_available"]
+            "text_generation_available": service_status.get("text_generation_available", False),
+            "image_analysis_available": service_status.get("image_analysis_available", False),
+            "audio_transcription_available": service_status.get("audio_transcription_available", False)
         })
     
-    if ai_services:
-        status.update(ai_services.get_service_status())
-    
-    if chatbot:
-        status.update(chatbot.get_service_info())
-    
+    # Detailed status from RAG Service
+    if rag_service:
+        status.update(rag_service.get_service_info())
+
     return status
 
 @app.get("/safety-info")
