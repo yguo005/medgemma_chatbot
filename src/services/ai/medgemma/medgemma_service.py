@@ -157,8 +157,12 @@ class MedGemmaService:
                     load_in_4bit=True,
                     bnb_4bit_compute_dtype=torch.bfloat16,
                     bnb_4bit_use_double_quant=True,
-                    bnb_4bit_quant_type="nf4"
+                    bnb_4bit_quant_type="nf4",
+                    llm_int8_enable_fp32_cpu_offload=True  # Enable CPU offloading for insufficient GPU memory
                 )
+                # Use a custom device map for mixed GPU/CPU deployment
+                model_kwargs["device_map"] = "auto"
+                model_kwargs["max_memory"] = {0: "0.8GiB", "cpu": "8GiB"}  # Adjust based on available GPU memory
             elif self.use_quantization and self.device != "cuda":
                 logger.warning(" Quantization is only supported on CUDA devices. Disabling quantization.")
                 self.use_quantization = False

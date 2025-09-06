@@ -187,12 +187,17 @@ class OptimizedAIServiceManager:
                 "error": str(e)
             }
     
-    async def generate_medical_response(self, query: str, context: str = "") -> Dict[str, Any]:
+    async def generate_medical_response(self, query: str, context: str = "", **kwargs) -> Dict[str, Any]:
         """
         Generate medical text response with proper prioritization:
         1. MedGemma (local)
         2. MedGemma Model Garden (cloud)
         3. OpenAI GPT-4 (emergency fallback)
+        
+        Args:
+            query: The medical query
+            context: Additional context
+            **kwargs: Additional parameters (max_length, temperature, etc.) for underlying services
         """
         
         # Priority 1: Local MedGemma
@@ -200,7 +205,8 @@ class OptimizedAIServiceManager:
             try:
                 result = await self.services['medgemma_local'].generate_medical_response(
                     query=query, 
-                    context=context
+                    context=context,
+                    **kwargs  # Forward all additional parameters
                 )
                 if result.get('success'):
                     logger.info(" Response generated with local MedGemma")
