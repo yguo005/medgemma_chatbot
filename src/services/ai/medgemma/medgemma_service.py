@@ -8,7 +8,6 @@ import logging
 import torch
 from typing import Dict, Any, Optional, List
 from transformers import (
-    pipeline,
     BitsAndBytesConfig,
     AutoModelForCausalLM, 
     AutoTokenizer,
@@ -30,17 +29,19 @@ class MedGemmaService:
         self, 
         model_name: str = "google/medgemma-4b-it",
         device: str = "auto",
-        use_quantization: bool = False,
+        use_quantization: bool = True,  # Default to True for Colab efficiency
         multimodal: Optional[bool] = None
     ):
         """
-        Initialize MedGemma service following official Google notebook
+        Initialize MedGemma service with LAZY LOADING and optimized for Colab demos.
+        - Defaults to 4-bit quantization for speed and memory.
+        - Uses only the direct, memory-efficient inference method.
         
         Args:
-            model_name: HuggingFace model identifier (e.g., "google/medgemma-4b-it")
-            device: Device setting (kept for compatibility, always uses "auto")
-            use_quantization: Enable 4-bit quantization for memory efficiency
-            multimodal: Multimodal setting (auto-detected from model name)
+            model_name: HuggingFace model identifier.
+            device: Device setting ("auto").
+            use_quantization: Enable 4-bit quantization.
+            multimodal: Auto-detected from model name.
         """
         self.model_name = model_name
         self.use_quantization = use_quantization
@@ -50,42 +51,57 @@ class MedGemmaService:
         self.is_text_only = "text" in self.model_variant
         
         # Set task based on variant (following official logic)
-        if self.is_text_only:
-            self.task = "text-generation"
-        else:
-            self.task = "image-text-to-text"
+        self.task = "text-generation" if self.is_text_only else "image-text-to-text"
         
-        # Initialize components
-        self.pipeline = None
+        # LAZY LOADING: Initialize components as None, load only on first request
         self.model = None
         self.processor_or_tokenizer = None
-        self.executor = ThreadPoolExecutor(max_workers=2)
+        self.executor = ThreadPoolExecutor(max_workers=1) # Single worker is enough for a demo
         
-        # Load model following official implementation
-        self._load_model()
+        # Lazy loading state management
+        self.is_loaded = False
+        self.load_lock = asyncio.Lock()
+        
+        logger.info(f" MedGemmaService initialized for LAZY LOADING with model {self.model_name}")
+        logger.info(f"   Quantization: {self.use_quantization}. Model will be loaded on first request.")
     
-    def _load_model(self):
-        """Load model following official Google notebook implementation exactly"""
-        try:
-            logger.info(f"🚀 Loading MedGemma model: {self.model_name}")
-            logger.info(f"   Variant: {self.model_variant}")
-            logger.info(f"   Task: {self.task}")
-            logger.info(f"   Quantization: {self.use_quantization}")
+    async def _ensure_model_loaded(self):
+        """
+        Asynchronously checks if the model is loaded and loads it if not.
+        Uses a lock to prevent multiple concurrent loading attempts.
+        """
+        if self.is_loaded:
+            return
+        
+        async with self.load_lock:
+            # Double-check after acquiring the lock
+            if self.is_loaded:
+                return
             
-            # Check 27B variant requirements (following official notebook)
-            if "27b" in self.model_variant and self.use_quantization:
-                try:
-                    import google.colab  # type: ignore
-                    google_colab = True
-                except ImportError:
-                    google_colab = False
+            logger.info(" First request received. Lazily loading MedGemma model...")
+            try:
+                await asyncio.get_event_loop().run_in_executor(
+                    self.executor, self._load_model_and_processor
+                )
+                self.is_loaded = True
+                logger.info(" Model loaded successfully on first use.")
+            except Exception as e:
+                logger.error(f" Failed to lazily load MedGemma model: {e}")
                 
-                if google_colab and self.use_quantization:
-                    if not ("A100" in torch.cuda.get_device_name(0) and self.use_quantization):
-                        logger.warning(
-                            "Runtime may have insufficient memory to run a 27B variant. "
-                            "A100 GPU and 4-bit quantization are recommended."
-                        )
+                # Reset state to allow another attempt
+                self.model = None
+                self.processor_or_tokenizer = None
+                self.is_loaded = False
+                raise  # Re-raise the exception to the caller
+    
+    def _load_model_and_processor(self):
+        """
+        Load model following official Google notebook implementation exactly.
+        Optimized for Colab demos with 4-bit quantization by default.
+        """
+        try:
+            logger.info(f" Loading MedGemma model: {self.model_name}")
+            logger.info(f"   Quantization: {self.use_quantization}")
             
             # Model kwargs following official notebook exactly
             model_kwargs = dict(
@@ -93,56 +109,30 @@ class MedGemmaService:
                 device_map="auto",
             )
             
-            # Add quantization if requested (following official pattern exactly)
+            # Add quantization if requested (official pattern)
             if self.use_quantization:
                 try:
                     model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True)
-                    logger.info("   ✅ Quantization config created successfully")
+                    logger.info("    4-bit quantization enabled for Colab efficiency.")
                 except Exception as e:
-                    logger.warning(f"   ⚠️  Quantization failed, falling back to non-quantized: {e}")
-                    self.use_quantization = False  # Update the flag
+                    logger.warning(f"    Quantization failed, falling back to non-quantized: {e}")
+                    self.use_quantization = False
             
             # Load model and processor/tokenizer directly (official implementation)
-            try:
-                if self.is_text_only:
-                    self.model = AutoModelForCausalLM.from_pretrained(self.model_name, **model_kwargs)
-                    self.processor_or_tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-                else:
-                    self.model = AutoModelForImageTextToText.from_pretrained(self.model_name, **model_kwargs)
-                    self.processor_or_tokenizer = AutoProcessor.from_pretrained(self.model_name)
-                    
-                logger.info("   ✅ Direct model loading successful")
-                
-            except Exception as e:
-                if "bitsandbytes" in str(e) and "quantization_config" in model_kwargs:
-                    logger.warning("   🔄 Direct model loading failed with quantization, retrying without...")
-                    # Remove quantization and retry direct model loading
-                    model_kwargs.pop("quantization_config", None)
-                    self.use_quantization = False
-                    if self.is_text_only:
-                        self.model = AutoModelForCausalLM.from_pretrained(self.model_name, **model_kwargs)
-                        self.processor_or_tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-                    else:
-                        self.model = AutoModelForImageTextToText.from_pretrained(self.model_name, **model_kwargs)
-                        self.processor_or_tokenizer = AutoProcessor.from_pretrained(self.model_name)
-                else:
-                    raise
             
-            # Create pipeline as backup method (following official implementation)
-            try:
-                self.pipeline = pipeline(self.task, model=self.model_name, model_kwargs=model_kwargs)
-                # Set generation config (following official notebook)
-                self.pipeline.model.generation_config.do_sample = False
-                logger.info("   ✅ Pipeline created successfully")
-            except Exception as e:
-                logger.warning(f"   ⚠️  Pipeline creation failed: {e}")
-                self.pipeline = None
+            if self.is_text_only:
+                from transformers import AutoModelForCausalLM, AutoTokenizer
+                self.model = AutoModelForCausalLM.from_pretrained(self.model_name, **model_kwargs)
+                self.processor_or_tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+            else:
+                from transformers import AutoModelForImageTextToText, AutoProcessor
+                self.model = AutoModelForImageTextToText.from_pretrained(self.model_name, **model_kwargs)
+                self.processor_or_tokenizer = AutoProcessor.from_pretrained(self.model_name)
             
-            logger.info("✅ MedGemma model loaded successfully with official methods")
+            logger.info(" MedGemma model loaded successfully following official notebook patterns")
             
         except Exception as e:
-            logger.error(f"❌ Failed to load MedGemma model: {e}")
-            self.pipeline = None
+            logger.error(f" Failed to load MedGemma model: {e}")
             self.model = None
             self.processor_or_tokenizer = None
             raise
@@ -152,22 +142,30 @@ class MedGemmaService:
         query: str, 
         context: str = "", 
         max_new_tokens: int = 300,
-        use_direct_method: bool = True,
         **kwargs
     ) -> Dict[str, Any]:
         """
-        Generate medical response using official implementation methods
+        Generate medical response using the optimized direct method with LAZY LOADING.
         
         Args:
-            query: User's medical question
-            context: Additional context (optional)
-            max_new_tokens: Maximum new tokens to generate
-            use_direct_method: Use direct model generation (more memory efficient) vs pipeline
-            **kwargs: Additional parameters (ignored for simplicity)
+            query: User's medical question.
+            context: Additional context (optional).
+            max_new_tokens: Maximum new tokens to generate.
+            **kwargs: Additional parameters (ignored).
         
         Returns:
-            Dict containing the response and metadata
+            Dict containing the response and metadata.
         """
+        # LAZY LOADING: Ensure model is loaded before generating response
+        try:
+            await self._ensure_model_loaded()
+        except Exception as e:
+            return {
+                "success": False,
+                "response": "Failed to load MedGemma model. Please try again later.",
+                "error": f"Model loading failed: {str(e)}"
+            }
+        
         if not self.model or not self.processor_or_tokenizer:
             return {
                 "success": False,
@@ -176,7 +174,7 @@ class MedGemmaService:
             }
         
         try:
-            # Create messages following official format
+            # Create messages following official notebook format exactly
             system_instruction = "You are a helpful medical assistant."
             
             user_text = f"Context: {context}\n\nQuestion: {query}" if context else query
@@ -192,64 +190,43 @@ class MedGemmaService:
                 }
             ]
             
-            # Adjust max_new_tokens based on variant (following official notebook)
-            if "27b" in self.model_variant:
-                max_new_tokens = min(max_new_tokens, 1500)
-            else:
-                max_new_tokens = min(max_new_tokens, 500)
+            # Adjust max_new_tokens following official notebook (4b model: 500 for text)
+            max_new_tokens = min(max_new_tokens, 500)
             
-            # Use direct method (more memory efficient) or pipeline method
-            if use_direct_method:
-                # Run inference using direct model method (official implementation)
-                loop = asyncio.get_event_loop()
-                response = await loop.run_in_executor(
-                    self.executor,
-                    self._generate_with_direct_model,
-                    messages,
-                    max_new_tokens
-                )
-                method_used = "direct_model"
-            else:
-                # Fallback to pipeline method
-                loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(
-                    self.executor,
-                    self._generate_with_pipeline,
-                    messages,
-                    max_new_tokens
-                )
-                response = result[0]["generated_text"][-1]["content"]
-                method_used = "pipeline"
+            # Run inference using the direct model method
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                self.executor,
+                self._generate_with_direct_model,
+                messages,
+                max_new_tokens
+            )
             
-            logger.info(f"✅ MedGemma response generated successfully using {method_used}")
+            logger.info(f" MedGemma response generated successfully using direct method")
             
             return {
                 "success": True,
                 "response": response,
                 "model_used": self.model_name,
                 "model_variant": self.model_variant,
-                "method": method_used,
+                "method": "direct_model",
                 "max_new_tokens": max_new_tokens
             }
             
         except Exception as e:
-            logger.error(f"❌ MedGemma generation failed: {e}")
+            logger.error(f" MedGemma generation failed: {e}")
             return {
                 "success": False,
                 "response": "I apologize, but I'm having trouble processing your medical query. Please consult with a healthcare professional.",
                 "error": str(e)
             }
     
-    def _generate_with_pipeline(self, messages: List[Dict[str, Any]], max_new_tokens: int):
-        """Generate text using pipeline (following official implementation)"""
-        return self.pipeline(messages, max_new_tokens=max_new_tokens)
-    
     def _generate_with_direct_model(self, messages: List[Dict[str, Any]], max_new_tokens: int) -> str:
         """
-        Generate text using direct model method (following official notebook)
-        This is more memory efficient than the pipeline approach
+        Generate text using direct model method (exact official notebook implementation).
+        This follows the official HuggingFace notebook pattern precisely.
         """
-        # Apply chat template following official implementation
+        # Apply chat template following official implementation exactly
         inputs = self.processor_or_tokenizer.apply_chat_template(
             messages,
             add_generation_prompt=True,
@@ -260,12 +237,12 @@ class MedGemmaService:
         
         input_len = inputs["input_ids"].shape[-1]
         
-        # Generate with inference mode for memory efficiency (official pattern)
+        # Generate with inference mode (exact official pattern)
         with torch.inference_mode():
             generation = self.model.generate(
                 **inputs, 
                 max_new_tokens=max_new_tokens, 
-                do_sample=False
+                do_sample=False  # Following official notebook default
             )
             generation = generation[0][input_len:]
         
@@ -278,27 +255,35 @@ class MedGemmaService:
         image, 
         text_prompt: str = "Describe this medical image.",
         max_new_tokens: int = 300,
-        use_direct_method: bool = True,
         **kwargs
     ) -> Dict[str, Any]:
         """
-        Analyze medical images following official multimodal implementation
+        Analyze medical images using the optimized direct method with LAZY LOADING.
         
         Args:
-            image: PIL Image or image path
-            text_prompt: Text prompt for analysis
-            max_new_tokens: Maximum new tokens to generate
-            use_direct_method: Use direct model generation (more memory efficient) vs pipeline
-            **kwargs: Additional parameters (for compatibility)
+            image: PIL Image or image path.
+            text_prompt: Text prompt for analysis.
+            max_new_tokens: Maximum new tokens to generate.
+            **kwargs: Additional parameters (ignored).
         
         Returns:
-            Dict containing the multimodal analysis
+            Dict containing the multimodal analysis.
         """
         if self.is_text_only:
             return {
                 "success": False,
                 "response": "This is a text-only model variant. Multimodal analysis not supported.",
                 "error": "Text-only model"
+            }
+        
+        # LAZY LOADING: Ensure model is loaded before analyzing image
+        try:
+            await self._ensure_model_loaded()
+        except Exception as e:
+            return {
+                "success": False,
+                "response": "Failed to load MedGemma model for image analysis. Please try again later.",
+                "error": f"Model loading failed: {str(e)}"
             }
         
         if not self.model or not self.processor_or_tokenizer:
@@ -321,7 +306,7 @@ class MedGemmaService:
                         "error": "PIL import failed"
                     }
             
-            # Create messages following official multimodal format
+            # Create messages following official notebook multimodal format exactly
             system_instruction = "You are an expert radiologist."
             
             messages = [
@@ -338,47 +323,30 @@ class MedGemmaService:
                 }
             ]
             
-            # Adjust max_new_tokens for multimodal (following official notebook)
-            if "27b" in self.model_variant:
-                max_new_tokens = min(max_new_tokens, 1300)
-            else:
-                max_new_tokens = min(max_new_tokens, 300)
+            # Adjust max_new_tokens following official notebook (4b model: 300 for multimodal)
+            max_new_tokens = min(max_new_tokens, 300)
             
-            # Use direct method (more memory efficient) or pipeline method
-            if use_direct_method:
-                # Run inference using direct model method (official implementation)
-                loop = asyncio.get_event_loop()
-                response = await loop.run_in_executor(
-                    self.executor,
-                    self._generate_multimodal_with_direct_model,
-                    messages,
-                    max_new_tokens
-                )
-                method_used = "direct_model"
-            else:
-                # Fallback to pipeline method
-                loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(
-                    self.executor,
-                    self._generate_with_pipeline,
-                    messages,
-                    max_new_tokens
-                )
-                response = result[0]["generated_text"][-1]["content"]
-                method_used = "pipeline"
+            # Run inference using the direct model method
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                self.executor,
+                self._generate_multimodal_with_direct_model,
+                messages,
+                max_new_tokens
+            )
             
-            logger.info(f"✅ MedGemma multimodal response generated successfully using {method_used}")
+            logger.info(f" MedGemma multimodal response generated successfully using direct method")
             
             return {
                 "success": True,
                 "response": response,
                 "model_used": self.model_name,
-                "method": method_used,
+                "method": "direct_model",
                 "mode": "multimodal"
             }
             
         except Exception as e:
-            logger.error(f"❌ MedGemma multimodal generation failed: {e}")
+            logger.error(f" MedGemma multimodal generation failed: {e}")
             return {
                 "success": False,
                 "response": "I apologize, but I'm having trouble processing your medical image query. Please consult with a healthcare professional.",
@@ -387,10 +355,10 @@ class MedGemmaService:
     
     def _generate_multimodal_with_direct_model(self, messages: List[Dict[str, Any]], max_new_tokens: int) -> str:
         """
-        Generate multimodal response using direct model method (following official notebook)
-        This is more memory efficient than the pipeline approach for multimodal tasks
+        Generate multimodal response using direct model method (exact official notebook implementation).
+        This follows the official HuggingFace notebook pattern precisely for multimodal tasks.
         """
-        # Apply chat template for multimodal following official implementation
+        # Apply chat template for multimodal following official implementation exactly
         inputs = self.processor_or_tokenizer.apply_chat_template(
             messages,
             add_generation_prompt=True,
@@ -401,12 +369,12 @@ class MedGemmaService:
         
         input_len = inputs["input_ids"].shape[-1]
         
-        # Generate with inference mode for memory efficiency (official pattern)
+        # Generate with inference mode (exact official pattern)
         with torch.inference_mode():
             generation = self.model.generate(
                 **inputs, 
                 max_new_tokens=max_new_tokens, 
-                do_sample=False
+                do_sample=False  # Following official notebook default
             )
             generation = generation[0][input_len:]
         
@@ -451,7 +419,6 @@ class MedGemmaService:
             "task": self.task,
             "model_loaded": self.model is not None,
             "tokenizer_loaded": self.processor_or_tokenizer is not None,
-            "pipeline_ready": self.pipeline is not None,
             "quantization_enabled": self.use_quantization,
             "cuda_available": torch.cuda.is_available(),
             "official_implementation": True,
