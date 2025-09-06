@@ -89,30 +89,39 @@ class ConversationManager:
     
     async def process_message(self, session_id: str, message: str, is_choice: bool = False) -> Dict[str, Any]:
         """Process incoming message and return appropriate response"""
-        session = self.get_session(session_id)
-        current_state = session['state']
-        
-        # Store the message for context
-        session['collected_data']['last_message'] = message
-        
-        if current_state == ConversationState.INITIAL:
-            return await self._handle_initial_state(session_id, message)
-        elif current_state == ConversationState.SYMPTOM_DESCRIPTION:
-            return await self._handle_symptom_description(session_id, message)
-        elif current_state == ConversationState.DURATION_INQUIRY:
-            return await self._handle_duration_inquiry(session_id, message, is_choice)
-        elif current_state == ConversationState.INTENSITY_INQUIRY:
-            return await self._handle_intensity_inquiry(session_id, message, is_choice)
-        elif current_state == ConversationState.TIMING_INQUIRY:
-            return await self._handle_timing_inquiry(session_id, message, is_choice)
-        elif current_state == ConversationState.DIAGNOSIS:
-            return self._handle_diagnosis(session_id, message)
-        elif current_state == ConversationState.SERVICES:
-            return self._handle_services_state(session_id, message)
-        elif current_state == ConversationState.FOLLOWUP:
-            return self._handle_followup(session_id, message)
-        else:
-            return self._handle_general_query(session_id, message)
+        try:
+            session = self.get_session(session_id)
+            current_state = session['state']
+            
+            # Store the message for context
+            session['collected_data']['last_message'] = message
+            
+            if current_state == ConversationState.INITIAL:
+                return await self._handle_initial_state(session_id, message)
+            elif current_state == ConversationState.SYMPTOM_DESCRIPTION:
+                return await self._handle_symptom_description(session_id, message)
+            elif current_state == ConversationState.DURATION_INQUIRY:
+                return await self._handle_duration_inquiry(session_id, message, is_choice)
+            elif current_state == ConversationState.INTENSITY_INQUIRY:
+                return await self._handle_intensity_inquiry(session_id, message, is_choice)
+            elif current_state == ConversationState.TIMING_INQUIRY:
+                return await self._handle_timing_inquiry(session_id, message, is_choice)
+            elif current_state == ConversationState.DIAGNOSIS:
+                return self._handle_diagnosis(session_id, message)
+            elif current_state == ConversationState.SERVICES:
+                return self._handle_services_state(session_id, message)
+            elif current_state == ConversationState.FOLLOWUP:
+                return self._handle_followup(session_id, message)
+            else:
+                return self._handle_general_query(session_id, message)
+        except Exception as e:
+            logger.error(f" Error processing message for session {session_id}: {e}", exc_info=True)
+            # Fallback response
+            return {
+                "response_type": "error",
+                "response": "Sorry, something went wrong on our end. Please try again later.",
+                "session_id": session_id
+            }
     
     async def _handle_initial_state(self, session_id: str, message: str) -> Dict[str, Any]:
         """Handle initial symptom description with AI-powered entity extraction"""
@@ -696,15 +705,7 @@ Example format:
             logger.info(f" Retrieving RAG context for: {rag_query}")
             
             # Query the RAG system for relevant medical context
-            if hasattr(self.rag_service, 'chat'):
-                # Use chatbot's RAG system
-                rag_response = await self.rag_service.get_response(rag_query, use_ai_enhancement=False)
-                clinical_context = rag_response.get('response', '')
-            elif hasattr(self.rag_service, 'query_vectorstore'):
-                # Direct vectorstore query
-                clinical_context = await self.rag_service.query_vectorstore(rag_query)
-            else:
-                raise Exception("RAG service does not have required methods")
+            clinical_context = await self.rag_service.get_response(query=rag_query)
             
             logger.info(f" Retrieved clinical context: {clinical_context[:200]}...")
             
@@ -874,15 +875,7 @@ Return ONLY the JSON object, no additional text."""
             rag_query = f"{' '.join(key_terms)} definition medical encyclopedia explanation"
             
             if self.rag_service:
-                if hasattr(self.rag_service, 'chat'):
-                    # Use chatbot's RAG system
-                    rag_response = await self.rag_service.get_response(rag_query, use_ai_enhancement=False)
-                    encyclopedia_context = rag_response.get('response', '')
-                elif hasattr(self.rag_service, 'query_vectorstore'):
-                    # Direct vectorstore query
-                    encyclopedia_context = await self.rag_service.query_vectorstore(rag_query)
-                else:
-                    raise Exception("RAG service does not have required methods")
+                encyclopedia_context = await self.rag_service.get_response(query=rag_query)
                 
                 logger.info(f" Retrieved encyclopedia context: {encyclopedia_context[:200]}...")
             else:

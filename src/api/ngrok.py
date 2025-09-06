@@ -4,6 +4,9 @@ import sys
 import asyncio
 from pyngrok import ngrok, conf
 
+# for Colab
+sys.path.insert(0, os.path.abspath('src'))
+
 # Validate environment variables
 NGROK_TOKEN = os.environ.get("NGROK_AUTHTOKEN")
 OPENAI_KEY = os.environ.get("OPENAI_API_KEY")

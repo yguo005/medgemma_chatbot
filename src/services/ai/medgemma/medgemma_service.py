@@ -97,7 +97,7 @@ class MedGemmaService:
         if not PIPELINE_AVAILABLE:
             logger.error(" transformers.pipeline not available. MedGemma service disabled.")
             self.model = None
-            self.tokenizer = None
+            self.processor_or_tokenizer = None
             self.pipeline = None
             return
         
@@ -176,8 +176,13 @@ class MedGemmaService:
             # Create pipeline for easier inference
             pipeline_kwargs = {
                 "model": self.model,
-                "tokenizer": self.processor_or_tokenizer,  # Use unified processor/tokenizer
             }
+
+            # Explicitly pass processor for multimodal, otherwise tokenizer
+            if self.multimodal:
+                pipeline_kwargs["processor"] = self.processor_or_tokenizer
+            else:
+                pipeline_kwargs["tokenizer"] = self.processor_or_tokenizer
             
             if not self.use_quantization:
                 pipeline_kwargs["device"] = 0 if self.device == "cuda" else -1
@@ -560,7 +565,7 @@ Important guidelines:
             "model_name": self.model_name,
             "device": self.device,
             "model_loaded": self.model is not None,
-            "tokenizer_loaded": self.tokenizer is not None,
+            "tokenizer_loaded": self.processor_or_tokenizer is not None,
             "pipeline_ready": self.pipeline is not None,
             "task": self.task,
             "multimodal_enabled": self.multimodal,
@@ -580,4 +585,4 @@ Important guidelines:
     def __del__(self):
         """Cleanup resources"""
         if hasattr(self, 'executor'):
-            self.executor.shutdown(wait=False) 
+            self.executor.shutdown(wait=False)
