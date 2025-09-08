@@ -65,6 +65,10 @@ class MedGemmaService:
         logger.info(f" MedGemmaService initialized for LAZY LOADING with model {self.model_name}")
         logger.info(f"   Quantization: {self.use_quantization}. Model will be loaded on first request.")
     
+    def is_service_ready(self) -> bool:
+        """Check if the service is ready to process requests"""
+        return self.is_loaded and self.model is not None and self.processor_or_tokenizer is not None
+    
     async def _ensure_model_loaded(self):
         """
         Asynchronously checks if the model is loaded and loads it if not.
@@ -97,29 +101,24 @@ class MedGemmaService:
     def _load_model_and_processor(self):
         """
         Load model following official Google notebook implementation exactly.
-        Optimized for Colab demos with 4-bit quantization by default.
+        Simplified approach - no unnecessary complexity.
         """
         try:
             logger.info(f" Loading MedGemma model: {self.model_name}")
             logger.info(f"   Quantization: {self.use_quantization}")
             
-            # Model kwargs following official notebook exactly
+            # Model kwargs following official notebook exactly (simplified)
             model_kwargs = dict(
                 torch_dtype=torch.bfloat16,
                 device_map="auto",
             )
             
-            # Add quantization if requested (official pattern)
+            # Add quantization if requested (official pattern - simple)
             if self.use_quantization:
-                try:
-                    model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True)
-                    logger.info("    4-bit quantization enabled for Colab efficiency.")
-                except Exception as e:
-                    logger.warning(f"    Quantization failed, falling back to non-quantized: {e}")
-                    self.use_quantization = False
+                model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True)
+                logger.info("    4-bit quantization enabled (official pattern)")
             
             # Load model and processor/tokenizer directly (official implementation)
-            
             if self.is_text_only:
                 from transformers import AutoModelForCausalLM, AutoTokenizer
                 self.model = AutoModelForCausalLM.from_pretrained(self.model_name, **model_kwargs)

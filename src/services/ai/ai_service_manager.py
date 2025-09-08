@@ -87,44 +87,53 @@ class OptimizedAIServiceManager:
         """
         
         # Priority 1: Local MedGemma multimodal (should work on Colab T4 with quantization)
-        if self.services.get('medgemma_local'):
+        medgemma_service = self.services.get('medgemma_local')
+        if medgemma_service:
             try:
-                # Convert base64 to PIL Image for MedGemma
-                import tempfile
-                import base64
-                from PIL import Image as PILImage
+                # First ensure the model is actually loaded and ready
+                await medgemma_service._ensure_model_loaded()
                 
-                # Clean image data
-                if image_data.startswith('data:'):
-                    image_data = image_data.split(',', 1)[1]
-                
-                # Convert to PIL Image
-                image_bytes = base64.b64decode(image_data)
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_file:
-                    temp_file.write(image_bytes)
-                    temp_path = temp_file.name
-                
-                # Load as PIL Image
-                pil_image = PILImage.open(temp_path)
-                
-                result = await self.services['medgemma_local'].analyze_image_with_text(
-                    image=pil_image,  # Pass PIL Image object
-                    text_prompt="Analyze this medical image. Describe any visible symptoms, conditions, or abnormalities."
-                )
-                
-                # Cleanup
-                os.unlink(temp_path)
-                
-                if result.get('success'):
-                    logger.info(" Image analyzed with local MedGemma multimodal")
-                    return {
-                        "success": True,
-                        "analysis": result['response'],
-                        "service_used": "medgemma_local_multimodal"
-                    }
+                # Check if service is actually ready
+                if not medgemma_service.is_service_ready():
+                    logger.warning("  Local MedGemma service exists but model failed to load")
+                    # Continue to next service
                 else:
-                    # Log the specific error for debugging
-                    logger.warning(f"  Local MedGemma image analysis failed: {result.get('error', 'Unknown error')}")
+                    # Convert base64 to PIL Image for MedGemma
+                    import tempfile
+                    import base64
+                    from PIL import Image as PILImage
+                    
+                    # Clean image data
+                    if image_data.startswith('data:'):
+                        image_data = image_data.split(',', 1)[1]
+                    
+                    # Convert to PIL Image
+                    image_bytes = base64.b64decode(image_data)
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_file:
+                        temp_file.write(image_bytes)
+                        temp_path = temp_file.name
+                    
+                    # Load as PIL Image
+                    pil_image = PILImage.open(temp_path)
+                    
+                    result = await medgemma_service.analyze_image_with_text(
+                        image=pil_image,  # Pass PIL Image object
+                        text_prompt="Analyze this medical image. Describe any visible symptoms, conditions, or abnormalities."
+                    )
+                    
+                    # Cleanup
+                    os.unlink(temp_path)
+                    
+                    if result.get('success'):
+                        logger.info(" Image analyzed with local MedGemma multimodal")
+                        return {
+                            "success": True,
+                            "analysis": result['response'],
+                            "service_used": "medgemma_local_multimodal"
+                        }
+                    else:
+                        # Log the specific error for debugging
+                        logger.warning(f"  Local MedGemma image analysis failed: {result.get('error', 'Unknown error')}")
                     
             except Exception as e:
                 logger.warning(f"  Local MedGemma image analysis failed: {e}")
@@ -210,16 +219,25 @@ class OptimizedAIServiceManager:
         """
         
         # Priority 1: Local MedGemma
-        if self.services.get('medgemma_local'):
+        medgemma_service = self.services.get('medgemma_local')
+        if medgemma_service:
             try:
-                result = await self.services['medgemma_local'].generate_medical_response(
-                    query=query, 
-                    context=context,
-                    **kwargs  # Forward all additional parameters
-                )
-                if result.get('success'):
-                    logger.info(" Response generated with local MedGemma")
-                    return result
+                # First ensure the model is actually loaded and ready
+                await medgemma_service._ensure_model_loaded()
+                
+                # Check if service is actually ready
+                if not medgemma_service.is_service_ready():
+                    logger.warning("  Local MedGemma service exists but model failed to load")
+                    # Continue to next service
+                else:
+                    result = await medgemma_service.generate_medical_response(
+                        query=query, 
+                        context=context,
+                        **kwargs  # Forward all additional parameters
+                    )
+                    if result.get('success'):
+                        logger.info(" Response generated with local MedGemma")
+                        return result
             except Exception as e:
                 logger.warning(f"  Local MedGemma text generation failed: {e}")
         

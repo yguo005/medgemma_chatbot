@@ -93,9 +93,9 @@ HIPAA_CONFIG = {
 # OpenAI Configuration
 OPENAI_CONFIG = {
     "api_key": os.getenv("OPENAI_API_KEY"),
-    "vision_model": "gpt-4-vision-preview",
+    "vision_model": "gpt-4o",  # Updated from deprecated gpt-4-vision-preview
     "transcription_model": "whisper-1", 
-    "fallback_model": "gpt-4",  # For enhancement fallback
+    "fallback_model": "gpt-4o",  # Updated for consistency
     "max_tokens": 512,
     "temperature": 0.3
 }
