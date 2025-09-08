@@ -35,10 +35,9 @@ class OptimizedAIServiceManager:
             from src.services.ai.medgemma.medgemma_service import MedGemmaService
             self.services['medgemma_local'] = MedGemmaService(
                 model_name="google/medgemma-4b-it",
-                multimodal=True,  # Enable image processing
-                use_quantization=True  # Memory efficient
+                use_quantization=True  # Memory efficient for Colab - same as official notebook
             )
-            logger.info(" Local MedGemma initialized (multimodal)")
+            logger.info(" Local MedGemma initialized (multimodal 4B-IT with 4-bit quantization)")
         except Exception as e:
             logger.warning(f" Local MedGemma failed: {e}")
             self.services['medgemma_local'] = None
@@ -87,24 +86,29 @@ class OptimizedAIServiceManager:
         3. OpenAI GPT-4 Vision (emergency fallback)
         """
         
-        # Priority 1: Local MedGemma multimodal
+        # Priority 1: Local MedGemma multimodal (should work on Colab T4 with quantization)
         if self.services.get('medgemma_local'):
             try:
-                # Convert base64 to temp file for MedGemma
+                # Convert base64 to PIL Image for MedGemma
                 import tempfile
                 import base64
+                from PIL import Image as PILImage
                 
                 # Clean image data
                 if image_data.startswith('data:'):
                     image_data = image_data.split(',', 1)[1]
                 
-                # Create temp file
+                # Convert to PIL Image
+                image_bytes = base64.b64decode(image_data)
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as temp_file:
-                    temp_file.write(base64.b64decode(image_data))
+                    temp_file.write(image_bytes)
                     temp_path = temp_file.name
                 
+                # Load as PIL Image
+                pil_image = PILImage.open(temp_path)
+                
                 result = await self.services['medgemma_local'].analyze_image_with_text(
-                    image_path=temp_path,
+                    image=pil_image,  # Pass PIL Image object
                     text_prompt="Analyze this medical image. Describe any visible symptoms, conditions, or abnormalities."
                 )
                 
@@ -112,14 +116,19 @@ class OptimizedAIServiceManager:
                 os.unlink(temp_path)
                 
                 if result.get('success'):
-                    logger.info(" Image analyzed with local MedGemma")
+                    logger.info(" Image analyzed with local MedGemma multimodal")
                     return {
                         "success": True,
                         "analysis": result['response'],
                         "service_used": "medgemma_local_multimodal"
                     }
+                else:
+                    # Log the specific error for debugging
+                    logger.warning(f"  Local MedGemma image analysis failed: {result.get('error', 'Unknown error')}")
+                    
             except Exception as e:
                 logger.warning(f"  Local MedGemma image analysis failed: {e}")
+                # Continue to fallback services
         
         # Priority 2: MedGemma Model Garden multimodal
         if self.services.get('medgemma_cloud'):

@@ -63,9 +63,9 @@ class AIServices:
             # Prepare the prompt based on context
             prompt = self._get_vision_prompt(context)
             
-            # Make API call to GPT-4 Vision
+            # Make API call to GPT-4 Vision (using the current model)
             response = self.client.chat.completions.create(
-                model="gpt-4-vision-preview",
+                model="gpt-4o",  # Updated to current GPT-4 with vision model
                 messages=[
                     {
                         "role": "user",
@@ -95,7 +95,7 @@ class AIServices:
             return {
                 "success": True,
                 "analysis": analysis_text,
-                "model_used": "gpt-4-vision-preview",
+                "model_used": "gpt-4o",  # Updated model name
                 "tokens_used": response.usage.total_tokens if response.usage else None
             }
             

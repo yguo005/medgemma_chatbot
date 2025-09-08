@@ -107,7 +107,7 @@ class Chatbot:
                     query=query,
                     context=context,
                     max_length=512,
-                    temperature=0.3
+                    
                 )
                 if response["success"]:
                     return response["response"]
