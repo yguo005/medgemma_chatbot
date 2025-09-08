@@ -1,3 +1,9 @@
+# 1. primary and exclusive role of openai_services.py is to handle audio-to-text transcription (def transcribe_audio), because MedGemma does not have that capability
+# 2. acts as the crucial "emergency fallback" if gedgemma fails for text and image analysis in ai_service_manager.py
+# 3. Future Role: Cloud Services Gateway.  __init__ method in openai_services.py, it's also designed to initialize and manage MedGemmaModelGarden
+
+
+
 import os
 import base64
 import tempfile
@@ -46,7 +52,7 @@ class AIServices:
     
     async def analyze_image(self, image_data: str, context: str = "medical") -> Dict[str, Any]:
         """
-        Analyze an image using GPT-4 Vision API
+        Analyze an image using GPT-4o API
         
         Args:
             image_data: Base64 encoded image data (with or without data URL prefix)
@@ -63,7 +69,7 @@ class AIServices:
             # Prepare the prompt based on context
             prompt = self._get_vision_prompt(context)
             
-            # Make API call to GPT-4 Vision (using the current model)
+            # Make API call to GPT-4o (using the current model)
             response = self.client.chat.completions.create(
                 model="gpt-4o",  # Updated to current GPT-4 with vision model
                 messages=[
@@ -167,7 +173,7 @@ class AIServices:
     async def enhance_diagnosis_with_rag(self, symptoms: str, rag_response: str) -> str:
         """
         Enhance diagnosis by combining user symptoms with RAG system response
-        Uses MedGemma Model Garden if available, otherwise falls back to GPT-4
+        Uses MedGemma Model Garden if available, otherwise falls back to GPT-4o
         
         Args:
             symptoms: User-described symptoms

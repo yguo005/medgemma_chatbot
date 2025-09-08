@@ -83,7 +83,7 @@ class OptimizedAIServiceManager:
         Analyze image with proper service prioritization:
         1. MedGemma multimodal (local)
         2. MedGemma Model Garden (cloud) 
-        3. OpenAI GPT-4 Vision (emergency fallback)
+        3. OpenAI GPT-4o (emergency fallback)
         """
         
         # Priority 1: Local MedGemma multimodal (should work on Colab T4 with quantization)
@@ -159,7 +159,7 @@ class OptimizedAIServiceManager:
             except Exception as e:
                 logger.warning(f"  Model Garden image analysis failed: {e}")
         
-        # Priority 3: OpenAI GPT-4 Vision (emergency fallback)
+        # Priority 3: OpenAI GPT-4o (emergency fallback)
         if self.services.get('openai'):
             try:
                 result = await self.services['openai'].analyze_image(image_data, context)
@@ -168,7 +168,7 @@ class OptimizedAIServiceManager:
                     return {
                         "success": True,
                         "analysis": result['analysis'],
-                        "service_used": "openai_vision_fallback"
+                        "service_used": "openai_4o_fallback"
                     }
             except Exception as e:
                 logger.error(f" OpenAI image analysis failed: {e}")
@@ -210,7 +210,7 @@ class OptimizedAIServiceManager:
         Generate medical text response with proper prioritization:
         1. MedGemma (local)
         2. MedGemma Model Garden (cloud)
-        3. OpenAI GPT-4 (emergency fallback)
+        3. OpenAI GPT-4o (emergency fallback)
         
         Args:
             query: The medical query
@@ -255,7 +255,7 @@ class OptimizedAIServiceManager:
             except Exception as e:
                 logger.warning(f"  Model Garden text generation failed: {e}")
         
-        # Priority 3: OpenAI GPT-4 (emergency fallback)
+        # Priority 3: OpenAI GPT-4o (emergency fallback)
         if self.services.get('openai'):
             try:
                 # Use the RAG enhancement as text generation fallback
