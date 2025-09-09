@@ -123,6 +123,38 @@ class ConversationManager:
                 "session_id": session_id
             }
     
+    async def _try_rag_question_generation(self, session_id: str, message: str, session: Dict, question_type: str) -> Optional[Dict[str, Any]]:
+        """Common method to try RAG question generation with fallback handling"""
+        if not self.rag_service:
+            return None
+            
+        try:
+            # Get primary symptom for context
+            primary_symptom = self._extract_primary_symptom(session['collected_data'])
+            
+            # Generate dynamic question using RAG
+            dynamic_response = await self._generate_dynamic_question_with_rag(
+                primary_symptom=primary_symptom,
+                collected_data=session['collected_data'],
+                question_type=question_type
+            )
+            
+            self.add_to_history(session_id, message, dynamic_response['response_text'])
+            logger.info(f" Generated dynamic {question_type} question using RAG: {dynamic_response['response_text']}")
+            return dynamic_response
+            
+        except Exception as e:
+            logger.warning(f" Dynamic {question_type} question generation failed, using fallback: {e}")
+            return None
+    
+    def _create_fallback_choice_response(self, question_text: str, choices: List[str]) -> Dict[str, Any]:
+        """Create a standardized multiple choice response"""
+        return {
+            "response_type": "multiple_choice",
+            "response_text": question_text,
+            "choices": choices
+        }
+    
     async def _handle_initial_state(self, session_id: str, message: str) -> Dict[str, Any]:
         """Handle initial symptom description with AI-powered entity extraction"""
         session = self.get_session(session_id)
@@ -141,23 +173,14 @@ class ConversationManager:
                 symptom_type = structured_data.get('primary_symptom', 'symptoms')
                 logger.info(f"AI extracted symptoms: {structured_data}")
                 
-                # Phase 2: Generate dynamic duration question using RAG
-                if self.rag_service:
-                    try:
-                        dynamic_response = await self._generate_dynamic_question_with_rag(
-                            primary_symptom=symptom_type,
-                            collected_data=session['collected_data'],
-                            question_type="duration"
-                        )
-                        
-                        session['state'] = ConversationState.DURATION_INQUIRY
-                        self.add_to_history(session_id, message, "Understanding your symptoms. Let me ask some follow-up questions.")
-                        
-                        logger.info(f" Generated dynamic duration question using RAG: {dynamic_response['response_text']}")
-                        return dynamic_response
-                        
-                    except Exception as e:
-                        logger.warning(f" RAG question generation failed, using fallback: {e}")
+                # Try RAG-generated question first
+                session['state'] = ConversationState.DURATION_INQUIRY
+                rag_response = await self._try_rag_question_generation(
+                    session_id, message, session, "duration"
+                )
+                if rag_response:
+                    self.add_to_history(session_id, message, "Understanding your symptoms. Let me ask some follow-up questions.")
+                    return rag_response
                 
                 # Fallback to AI-context duration question
                 response_text = self._create_duration_question_with_ai_context(
@@ -181,17 +204,16 @@ class ConversationManager:
         # Add message to history
         self.add_to_history(session_id, message, f"Understanding your symptoms. Let me ask some follow-up questions.")
         
-        return {
-            "response_type": "multiple_choice",
-            "response_text": response_text,
-            "choices": [
+        return self._create_fallback_choice_response(
+            response_text,
+            [
                 "Less than 3 days",
                 "1 - 2 weeks", 
                 "1 month",
                 "More than 3 months",
                 "More than 1 year"
             ]
-        }
+        )
     
     async def _handle_symptom_description(self, session_id: str, message: str) -> Dict[str, Any]:
         """Handle symptom description from photo/voice analysis"""
@@ -203,24 +225,12 @@ class ConversationManager:
         session['collected_data']['duration'] = message
         session['state'] = ConversationState.INTENSITY_INQUIRY
         
-        # Get primary symptom for context
-        primary_symptom = self._extract_primary_symptom(session['collected_data'])
-        
-        # Phase 2: Generate dynamic intensity question using RAG
-        if self.rag_service:
-            try:
-                dynamic_response = await self._generate_dynamic_question_with_rag(
-                    primary_symptom=primary_symptom,
-                    collected_data=session['collected_data'],
-                    question_type="intensity"
-                )
-                
-                self.add_to_history(session_id, message, dynamic_response['response_text'])
-                logger.info(f" Generated dynamic intensity question using RAG: {dynamic_response['response_text']}")
-                return dynamic_response
-                
-            except Exception as e:
-                logger.warning(f" Dynamic intensity question generation failed, using fallback: {e}")
+        # Try RAG-generated question first
+        rag_response = await self._try_rag_question_generation(
+            session_id, message, session, "intensity"
+        )
+        if rag_response:
+            return rag_response
         
         # Fallback: Use AI-extracted data for better context if available
         ai_data = session['collected_data'].get('ai_extracted_data', {})
@@ -243,11 +253,7 @@ class ConversationManager:
         
         self.add_to_history(session_id, message, intensity_question)
         
-        return {
-            "response_type": "multiple_choice",
-            "response_text": intensity_question,
-            "choices": choices
-        }
+        return self._create_fallback_choice_response(intensity_question, choices)
     
     async def _handle_intensity_inquiry(self, session_id: str, message: str, is_choice: bool) -> Dict[str, Any]:
         """Handle intensity selection with RAG-powered timing question"""
@@ -255,24 +261,12 @@ class ConversationManager:
         session['collected_data']['intensity'] = message
         session['state'] = ConversationState.TIMING_INQUIRY
         
-        # Get primary symptom for context
-        primary_symptom = self._extract_primary_symptom(session['collected_data'])
-        
-        # Phase 2: Generate dynamic timing question using RAG
-        if self.rag_service:
-            try:
-                dynamic_response = await self._generate_dynamic_question_with_rag(
-                    primary_symptom=primary_symptom,
-                    collected_data=session['collected_data'],
-                    question_type="timing"
-                )
-                
-                self.add_to_history(session_id, message, dynamic_response['response_text'])
-                logger.info(f" Generated dynamic timing question using RAG: {dynamic_response['response_text']}")
-                return dynamic_response
-                
-            except Exception as e:
-                logger.warning(f" Dynamic timing question generation failed, using fallback: {e}")
+        # Try RAG-generated question first
+        rag_response = await self._try_rag_question_generation(
+            session_id, message, session, "timing"
+        )
+        if rag_response:
+            return rag_response
         
         # Fallback timing question
         timing_question = "When do these symptoms typically occur or get worse?"
@@ -287,11 +281,10 @@ class ConversationManager:
         
         self.add_to_history(session_id, message, timing_question)
         
-        return {
-            "response_type": "multiple_choice", 
-            "response_text": timing_question,
-            "choices": choices[:4]  # Limit to 4 choices for consistency
-        }
+        return self._create_fallback_choice_response(
+            timing_question,
+            choices[:4]  # Limit to 4 choices for consistency
+        )
     
     async def _handle_timing_inquiry(self, session_id: str, message: str, is_choice: bool) -> Dict[str, Any]:
         """Handle timing selection and provide diagnosis with Phase 3 final explanation"""
@@ -586,31 +579,16 @@ Example format:
 }}"""
 
         try:
-            # Call AI service for extraction
-            if hasattr(self.ai_service, 'generate_medical_response'):
-                # Use MedGemmaService directly or ai_service_manager
-                ai_response = await self.ai_service.generate_medical_response(
-                    query=extraction_prompt,
-                    context=""
-                )
-                
-                if ai_response.get('success'):
-                    response_text = ai_response.get('response', '')
-                else:
-                    raise Exception(f"AI service error: {ai_response.get('error', 'Unknown error')}")
-                    
-            elif hasattr(self.ai_service, 'analyze_symptoms_text'):
-                # Use ai_service_manager or similar service
-                ai_response = await self.ai_service.analyze_symptoms_text(
-                    symptoms=extraction_prompt
-                )
-                
-                if ai_response.get('success'):
-                    response_text = ai_response.get('response', '')
-                else:
-                    raise Exception(f"AI service error: {ai_response.get('error', 'Unknown error')}")
+            # Call AI service for extraction - all services support generate_medical_response
+            ai_response = await self.ai_service.generate_medical_response(
+                query=extraction_prompt,
+                context=""
+            )
+            
+            if ai_response.get('success'):
+                response_text = ai_response.get('response', '')
             else:
-                raise Exception("AI service does not have required methods")
+                raise Exception(f"AI service error: {ai_response.get('error', 'Unknown error')}")
             
             # Parse the JSON response
             structured_data = self._parse_ai_extraction_response(response_text)
@@ -739,18 +717,15 @@ OUTPUT FORMAT (JSON only):
 Return ONLY the JSON object, no additional text."""
 
             # Call AI service to generate the question
-            if hasattr(self.ai_service, 'generate_medical_response'):
-                ai_response = await self.ai_service.generate_medical_response(
-                    query=question_prompt,
-                    context=""
-                )
-                
-                if ai_response.get('success'):
-                    response_text = ai_response.get('response', '')
-                else:
-                    raise Exception(f"AI service error: {ai_response.get('error', 'Unknown error')}")
+            ai_response = await self.ai_service.generate_medical_response(
+                query=question_prompt,
+                context=""
+            )
+            
+            if ai_response.get('success'):
+                response_text = ai_response.get('response', '')
             else:
-                raise Exception("AI service does not support question generation")
+                raise Exception(f"AI service error: {ai_response.get('error', 'Unknown error')}")
             
             # Parse the AI-generated question
             dynamic_question = self._parse_dynamic_question_response(response_text)
@@ -900,18 +875,15 @@ REQUIREMENTS:
 OUTPUT FORMAT: Return only the plain text explanation, no additional formatting."""
 
             # Call AI service to generate the explanation
-            if hasattr(self.ai_service, 'generate_medical_response'):
-                ai_response = await self.ai_service.generate_medical_response(
-                    query=explanation_prompt,
-                    context=""
-                )
-                
-                if ai_response.get('success'):
-                    explanation = ai_response.get('response', '').strip()
-                else:
-                    raise Exception(f"AI service error: {ai_response.get('error', 'Unknown error')}")
+            ai_response = await self.ai_service.generate_medical_response(
+                query=explanation_prompt,
+                context=""
+            )
+            
+            if ai_response.get('success'):
+                explanation = ai_response.get('response', '').strip()
             else:
-                raise Exception("AI service does not support explanation generation")
+                raise Exception(f"AI service error: {ai_response.get('error', 'Unknown error')}")
             
             logger.info(f" Generated final explanation: {explanation[:100]}...")
             
