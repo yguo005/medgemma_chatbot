@@ -15,6 +15,7 @@ class ConversationState(Enum):
     DURATION_INQUIRY = "duration_inquiry"
     INTENSITY_INQUIRY = "intensity_inquiry"
     TIMING_INQUIRY = "timing_inquiry"
+    FREQUENCY_INQUIRY = "frequency_inquiry"
     DIAGNOSIS = "diagnosis"
     SERVICES = "services"
     COMPLETED = "completed"
@@ -106,6 +107,8 @@ class ConversationManager:
                 return await self._handle_intensity_inquiry(session_id, message, is_choice)
             elif current_state == ConversationState.TIMING_INQUIRY:
                 return await self._handle_timing_inquiry(session_id, message, is_choice)
+            elif current_state == ConversationState.FREQUENCY_INQUIRY:
+                return await self._handle_frequency_inquiry(session_id, message, is_choice)
             elif current_state == ConversationState.DIAGNOSIS:
                 return self._handle_diagnosis(session_id, message)
             elif current_state == ConversationState.SERVICES:
@@ -159,22 +162,18 @@ class ConversationManager:
         """Handle initial symptom description with AI-powered entity extraction"""
         session = self.get_session(session_id)
         
+        # Store symptoms and set state
+        session['collected_data']['symptoms'] = message
+        session['state'] = ConversationState.DURATION_INQUIRY
+        
         # Phase 1: AI for Symptom Understanding
         if self.use_ai_extraction:
-            # Use AI to extract structured data from unstructured input
             try:
                 structured_data = await self._extract_symptoms_with_ai(message)
-                
-                # Store both original message and structured data
-                session['collected_data']['symptoms'] = message
                 session['collected_data']['ai_extracted_data'] = structured_data
-                
-                # Use AI-extracted primary symptom for more accurate conversation flow
-                symptom_type = structured_data.get('primary_symptom', 'symptoms')
                 logger.info(f"AI extracted symptoms: {structured_data}")
                 
                 # Try RAG-generated question first
-                session['state'] = ConversationState.DURATION_INQUIRY
                 rag_response = await self._try_rag_question_generation(
                     session_id, message, session, "duration"
                 )
@@ -182,38 +181,17 @@ class ConversationManager:
                     self.add_to_history(session_id, message, "Understanding your symptoms. Let me ask some follow-up questions.")
                     return rag_response
                 
-                # Fallback to AI-context duration question
-                response_text = self._create_duration_question_with_ai_context(
-                    symptom_type, structured_data.get('characteristics', []), structured_data.get('duration', '')
-                )
-                
             except Exception as e:
                 logger.error(f"AI extraction failed, falling back to rule-based: {e}")
-                # Fallback to original rule-based approach
-                session['collected_data']['symptoms'] = message
-                symptom_type = self._extract_symptom_type(message)
-                response_text = f"How long have you been experiencing this {symptom_type}?"
-        else:
-            # Original rule-based approach
-            session['collected_data']['symptoms'] = message
-            symptom_type = self._extract_symptom_type(message)
-            response_text = f"How long have you been experiencing this {symptom_type}?"
         
-        session['state'] = ConversationState.DURATION_INQUIRY
+        # Fallback: Use centralized fallback question generation
+        primary_symptom = self._extract_primary_symptom(session['collected_data'])
+        fallback_response = self._generate_fallback_question(primary_symptom, "duration")
         
         # Add message to history
-        self.add_to_history(session_id, message, f"Understanding your symptoms. Let me ask some follow-up questions.")
+        self.add_to_history(session_id, message, "Understanding your symptoms. Let me ask some follow-up questions.")
         
-        return self._create_fallback_choice_response(
-            response_text,
-            [
-                "Less than 3 days",
-                "1 - 2 weeks", 
-                "1 month",
-                "More than 3 months",
-                "More than 1 year"
-            ]
-        )
+        return fallback_response
     
     async def _handle_symptom_description(self, session_id: str, message: str) -> Dict[str, Any]:
         """Handle symptom description from photo/voice analysis"""
@@ -232,28 +210,13 @@ class ConversationManager:
         if rag_response:
             return rag_response
         
-        # Fallback: Use AI-extracted data for better context if available
-        ai_data = session['collected_data'].get('ai_extracted_data', {})
-        symptom_type = ai_data.get('primary_symptom', '') or self._extract_symptom_type(session['collected_data'].get('symptoms', ''))
-        characteristics = ai_data.get('characteristics', [])
+        # Fallback: Use centralized fallback question generation
+        primary_symptom = self._extract_primary_symptom(session['collected_data'])
+        fallback_response = self._generate_fallback_question(primary_symptom, "intensity")
         
-        # Create more intelligent intensity questions based on AI understanding
-        if any(keyword in symptom_type.lower() for keyword in ['pain', 'ache', 'hurt']):
-            if characteristics:
-                intensity_question = f"You described {symptom_type} with {', '.join(characteristics[:2])} qualities. How would you rate the intensity?"
-            else:
-                intensity_question = "How would you describe the intensity of your pain?"
-            choices = ["Mild (1-3)", "Moderate (4-6)", "Severe (7-10)", "I'm not sure"]
-        elif any(keyword in symptom_type.lower() for keyword in ['swelling', 'rash', 'inflammation']):
-            intensity_question = "How would you describe the severity of the affected area?"
-            choices = ["Mild", "Moderate", "Severe", "I'm not sure"]
-        else:
-            intensity_question = "How would you describe the severity of your symptoms?"
-            choices = ["Mild", "Moderate", "Severe", "I'm not sure"]
+        self.add_to_history(session_id, message, fallback_response['response_text'])
         
-        self.add_to_history(session_id, message, intensity_question)
-        
-        return self._create_fallback_choice_response(intensity_question, choices)
+        return fallback_response
     
     async def _handle_intensity_inquiry(self, session_id: str, message: str, is_choice: bool) -> Dict[str, Any]:
         """Handle intensity selection with RAG-powered timing question"""
@@ -268,28 +231,39 @@ class ConversationManager:
         if rag_response:
             return rag_response
         
-        # Fallback timing question
-        timing_question = "When do these symptoms typically occur or get worse?"
-        choices = [
-            "In the morning",
-            "During the day",
-            "In the evening",
-            "At night",
-            "After physical activity",
-            "No specific pattern"
-        ]
+        # Fallback: Use centralized fallback question generation
+        primary_symptom = self._extract_primary_symptom(session['collected_data'])
+        fallback_response = self._generate_fallback_question(primary_symptom, "timing")
         
-        self.add_to_history(session_id, message, timing_question)
+        self.add_to_history(session_id, message, fallback_response['response_text'])
         
-        return self._create_fallback_choice_response(
-            timing_question,
-            choices[:4]  # Limit to 4 choices for consistency
-        )
+        return fallback_response
     
     async def _handle_timing_inquiry(self, session_id: str, message: str, is_choice: bool) -> Dict[str, Any]:
-        """Handle timing selection and provide diagnosis with Phase 3 final explanation"""
+        """Handle timing selection and ask about frequency."""
         session = self.get_session(session_id)
         session['collected_data']['timing'] = message
+        session['state'] = ConversationState.FREQUENCY_INQUIRY
+
+        # Try RAG-generated question first
+        rag_response = await self._try_rag_question_generation(
+            session_id, message, session, "frequency"
+        )
+        if rag_response:
+            return rag_response
+
+        # Fallback: Use centralized fallback question generation
+        primary_symptom = self._extract_primary_symptom(session['collected_data'])
+        fallback_response = self._generate_fallback_question(primary_symptom, "frequency")
+        
+        self.add_to_history(session_id, message, fallback_response['response_text'])
+        
+        return fallback_response
+
+    async def _handle_frequency_inquiry(self, session_id: str, message: str, is_choice: bool) -> Dict[str, Any]:
+        """Handle frequency selection and provide diagnosis."""
+        session = self.get_session(session_id)
+        session['collected_data']['frequency'] = message
         session['state'] = ConversationState.DIAGNOSIS
         
         # Generate diagnosis based on collected data
@@ -446,6 +420,7 @@ class ConversationManager:
         duration = collected_data.get('duration', '')
         intensity = collected_data.get('intensity', '')
         timing = collected_data.get('timing', '')
+        frequency = collected_data.get('frequency', '')
         
         # Use AI-extracted data for better diagnosis if available
         ai_data = collected_data.get('ai_extracted_data', {})
@@ -472,7 +447,7 @@ class ConversationManager:
                     
                 return {
                     'title': 'Orthopedic Knee Assessment',
-                    'description': f'Based on your {duration.lower()} {intensity.lower()} knee symptoms{char_desc}{location_desc} that occur {timing.lower()}, this could indicate various knee conditions ranging from minor strain to more significant joint issues. Knee problems commonly result from injury to bones, ligaments, cartilage, or soft tissue, often caused by physical activity, overuse, or trauma.',
+                    'description': f'Based on your {duration.lower()} {intensity.lower()} knee symptoms{char_desc}{location_desc} that occur {timing.lower()} about {frequency.lower()}, this could indicate various knee conditions ranging from minor strain to more significant joint issues. Knee problems commonly result from injury to bones, ligaments, cartilage, or soft tissue, often caused by physical activity, overuse, or trauma.',
                     'recommendations': [
                         'Orthopedic specialist for comprehensive joint evaluation',
                         'Physical therapist for mobility assessment and treatment',
@@ -492,7 +467,7 @@ class ConversationManager:
                 
             return {
                 'title': 'Headache/Cephalgia Assessment',
-                'description': f'You\'ve described {duration.lower()} {intensity.lower()} headaches{char_desc}{location_desc} occurring {timing.lower()}. Headaches can have various causes including tension, stress, dehydration, medication overuse, or underlying medical conditions. The pattern and characteristics help determine the most appropriate treatment approach.',
+                'description': f'You\'ve described {duration.lower()} {intensity.lower()} headaches{char_desc}{location_desc} occurring {timing.lower()} about {frequency.lower()}. Headaches can have various causes including tension, stress, dehydration, medication overuse, or underlying medical conditions. The pattern and characteristics help determine the most appropriate treatment approach.',
                 'recommendations': [
                     'Primary care physician for initial evaluation and treatment plan',
                     'Neurologist consultation if headaches are frequent, severe, or changing',
@@ -508,7 +483,7 @@ class ConversationManager:
                 
             return {
                 'title': 'Gastrointestinal Symptoms Assessment',
-                'description': f'Your {duration.lower()} {intensity.lower()} abdominal symptoms occurring {timing.lower()} could indicate various digestive issues. These may range from dietary intolerances to inflammatory conditions or infections that require medical evaluation for proper diagnosis and treatment.',
+                'description': f'Your {duration.lower()} {intensity.lower()} abdominal symptoms occurring {timing.lower()} about {frequency.lower()} could indicate various digestive issues. These may range from dietary intolerances to inflammatory conditions or infections that require medical evaluation for proper diagnosis and treatment.',
                 'recommendations': [
                     'Primary care physician or gastroenterologist for evaluation',
                     'Consider dietary modifications and symptom tracking',
@@ -774,6 +749,8 @@ Return ONLY the JSON object, no additional text."""
             context_parts.append(f"Intensity: {collected_data['intensity']}")
         if collected_data.get('timing'):
             context_parts.append(f"Timing pattern: {collected_data['timing']}")
+        if collected_data.get('frequency'):
+            context_parts.append(f"Frequency: {collected_data['frequency']}")
         
         return "\n".join(context_parts) if context_parts else "No specific data collected yet"
     
@@ -822,6 +799,10 @@ Return ONLY the JSON object, no additional text."""
             "timing": {
                 "question": "When do these symptoms typically occur or get worse?",
                 "choices": ["In the morning", "During the day", "In the evening", "At night", "After physical activity", "No specific pattern"]
+            },
+            "frequency": {
+                "question": "How often does this symptom occur?",
+                "choices": ["Constantly", "Several times a day", "Once a day", "A few times a week"]
             }
         }
         
@@ -958,22 +939,7 @@ OUTPUT FORMAT: Return only the plain text explanation, no additional formatting.
             "generation_method": "fallback",
             "success": False
         }
-        """Create a more intelligent duration question based on AI-extracted context"""
-        
-        # If duration was already mentioned, acknowledge it
-        if duration_hint:
-            return f"You mentioned {symptom_type} for {duration_hint}. To better understand the timeline, which option best describes the duration?"
-        
-        # Customize question based on symptom type and characteristics
-        if symptom_type in ['headache', 'head pain']:
-            if any(char in ['pounding', 'throbbing'] for char in characteristics):
-                return f"You're experiencing {symptom_type} with {', '.join(characteristics)} characteristics. How long have you had these symptoms?"
-        
-        # Default intelligent question
-        if characteristics:
-            return f"You described {symptom_type} with {', '.join(characteristics[:2])} qualities. How long have you been experiencing this?"
-        else:
-            return f"How long have you been experiencing this {symptom_type}?"
+
     def _extract_primary_symptom(self, collected_data: Dict[str, Any]) -> str:
         """Extract the primary symptom from collected data for context"""
         # Try AI-extracted data first
@@ -987,26 +953,6 @@ OUTPUT FORMAT: Return only the plain text explanation, no additional formatting.
             return self._extract_symptom_type(symptoms)
         
         return 'symptoms'
-
-    def _create_duration_question_with_ai_context(self, symptom_type: str, 
-                                                 characteristics: List[str], 
-                                                 duration_hint: str) -> str:
-        """Create a more intelligent duration question based on AI-extracted context"""
-        
-        # If duration was already mentioned, acknowledge it
-        if duration_hint:
-            return f"You mentioned {symptom_type} for {duration_hint}. To better understand the timeline, which option best describes the duration?"
-        
-        # Create contextual question based on symptom type
-        if symptom_type in ['headache', 'head pain']:
-            if any(char in ['pounding', 'throbbing'] for char in characteristics):
-                return f"You're experiencing {symptom_type} with {', '.join(characteristics)} characteristics. How long have you had these symptoms?"
-        
-        # Default intelligent question
-        if characteristics:
-            return f"You described {symptom_type} with {', '.join(characteristics[:2])} qualities. How long have you been experiencing this?"
-        else:
-            return f"How long have you been experiencing this {symptom_type}?"
 
     def _extract_symptom_type(self, symptoms: str) -> str:
         symptoms_lower = symptoms.lower()
