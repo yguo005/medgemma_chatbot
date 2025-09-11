@@ -102,6 +102,8 @@ def test_environment():
     """Test the Python environment and dependencies"""
     print_section("Environment Check")
     
+    all_good = True
+    
     # Check Python version
     print(f"Python version: {sys.version}")
     
@@ -116,6 +118,8 @@ def test_environment():
                 print(f"✅ {var}: {value}")
         else:
             print(f"⚠️  {var}: Not set")
+            if var == 'OPENAI_API_KEY':
+                all_good = False
     
     # Check if we're in Colab
     try:
@@ -134,11 +138,16 @@ def test_environment():
                         print(f"✅ Colab secret {var}: Available (length: {len(secret_value)})")
                     else:
                         print(f"⚠️  Colab secret {var}: Empty or not set")
+                        if var == 'OPENAI_API_KEY':
+                            all_good = False
                 except Exception as e:
                     print(f"❌ Colab secret {var}: Error - {e}")
+                    if var == 'OPENAI_API_KEY':
+                        all_good = False
                     
         except ImportError:
             print("❌ Colab userdata not available")
+            all_good = False
     except ImportError:
         print("⚠️  Not running in Google Colab")
     
@@ -154,6 +163,9 @@ def test_environment():
             print(f"✅ {module}: Available")
         except ImportError as e:
             print(f"❌ {module}: Missing - {e}")
+            all_good = False
+    
+    return all_good
 
 def check_server_logs():
     """Check server logs for errors"""

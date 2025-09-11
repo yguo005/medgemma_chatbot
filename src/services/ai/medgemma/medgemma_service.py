@@ -120,22 +120,39 @@ class MedGemmaService:
     def _load_model_and_processor(self):
         """
         Load model following official Google notebook implementation exactly.
-        Simplified approach - no unnecessary complexity.
+        Includes memory optimization and better error handling.
         """
         try:
             logger.info(f" Loading MedGemma model: {self.model_name}")
             logger.info(f"   Quantization: {self.use_quantization}")
             
-            # Model kwargs following official notebook exactly (simplified)
+            # Check available memory and adjust settings
+            import platform
+            system = platform.system().lower()
+            
+            # Model kwargs following official notebook exactly
             model_kwargs = dict(
-                torch_dtype=torch.bfloat16,
                 device_map="auto",
             )
             
-            # Add quantization if requested (official pattern - simple)
+            # Memory optimization for Mac
+            if system == "darwin":  # Mac
+                model_kwargs["torch_dtype"] = torch.float16  # Use float16 instead of bfloat16 on Mac
+                model_kwargs["low_cpu_mem_usage"] = True
+                logger.info("   Mac optimization: Using float16 and low_cpu_mem_usage")
+            else:
+                model_kwargs["torch_dtype"] = torch.bfloat16  # Official default
+            
+            # Add quantization if requested and supported
             if self.use_quantization:
-                model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True)
-                logger.info("    4-bit quantization enabled (official pattern)")
+                try:
+                    model_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_4bit=True)
+                    logger.info("    4-bit quantization enabled (official pattern)")
+                except Exception as e:
+                    logger.warning(f"   Quantization failed, falling back to no quantization: {e}")
+                    self.use_quantization = False
+                    # Remove quantization config if it was added
+                    model_kwargs.pop("quantization_config", None)
             
             # Load model and processor/tokenizer directly (official implementation)
             if self.is_text_only:

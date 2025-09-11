@@ -80,7 +80,7 @@ def setup_colab_environment():
         print("❌ Not in Google Colab - using local settings")
         IN_COLAB = False
     
-    # Check GPU availability
+    # Check GPU availability and set quantization (following official notebook logic)
     try:
         import torch
         if torch.cuda.is_available():
@@ -90,13 +90,21 @@ def setup_colab_environment():
             gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
             print(f"   GPU memory: {gpu_memory_gb:.1f} GB")
             
-            # Enable quantization for GPU (but be conservative)
-            if gpu_memory_gb >= 12:  # T4 has 16GB, but be safe
+            # Following official notebook logic: T4 can handle 4B with quantization
+            if "T4" in gpu_name or gpu_memory_gb >= 15:
                 os.environ["MEDGEMMA_USE_QUANTIZATION"] = "true"
-                print("   🚀 Quantization enabled (sufficient GPU memory)")
+                print("   🚀 Quantization enabled (T4 GPU or sufficient memory)")
+            elif "A100" in gpu_name:
+                os.environ["MEDGEMMA_USE_QUANTIZATION"] = "true"
+                print("   🚀 Quantization enabled (A100 GPU)")
             else:
-                os.environ["MEDGEMMA_USE_QUANTIZATION"] = "false"
-                print("   ⚠️  Quantization disabled (limited GPU memory)")
+                # For other GPUs, be conservative
+                if gpu_memory_gb >= 8:
+                    os.environ["MEDGEMMA_USE_QUANTIZATION"] = "true"
+                    print("   🚀 Quantization enabled (sufficient GPU memory)")
+                else:
+                    os.environ["MEDGEMMA_USE_QUANTIZATION"] = "false"
+                    print("   ⚠️  Quantization disabled (limited GPU memory)")
         else:
             print("⚠️  No GPU detected - using CPU mode")
             os.environ["MEDGEMMA_USE_QUANTIZATION"] = "false"
@@ -113,13 +121,13 @@ def install_dependencies():
     """Install required dependencies"""
     print("\n📦 Installing dependencies...")
     
-    # Core dependencies
+    # Core dependencies - matching official notebook exactly
     deps = [
         "torch>=2.0.0",
         "transformers>=4.35.0", 
         "accelerate>=0.24.0",
-        "bitsandbytes>=0.43.1",  # Updated version for CPU support
-        "pillow>=9.0.0",
+        "bitsandbytes>=0.43.1",  # Updated version for better compatibility
+        "pillow>=9.0.0",  # Required for image processing
         "fastapi>=0.104.0",
         "uvicorn>=0.24.0",
         "langchain>=0.1.0",
@@ -128,7 +136,8 @@ def install_dependencies():
         "faiss-cpu>=1.7.4",
         "openai>=1.3.0",
         "python-dotenv>=1.0.0",
-        "nest_asyncio>=1.5.0"  # For Jupyter/Colab compatibility
+        "nest_asyncio>=1.5.0",  # For Jupyter/Colab compatibility
+        "huggingface_hub>=0.16.0"  # For proper HF authentication
     ]
     
     for dep in deps:
@@ -336,11 +345,11 @@ def start_server():
                     
                     # Test chat endpoint with longer timeout for model loading
                     try:
-                        print("🔄 Testing chat endpoint (may take 60s for model loading)...")
+                        print("🔄 Testing chat endpoint (may take 2-3 minutes for first model loading)...")
                         chat_response = requests.post(
                             "http://localhost:8000/chat",
                             json={"query": "test", "session_id": "colab_test"},
-                            timeout=90  # Increased timeout for MedGemma loading
+                            timeout=180  # 3 minute timeout for MedGemma loading (first time)
                         )
                         if chat_response.status_code == 200:
                             print("✅ Chat endpoint is working!")
@@ -356,9 +365,10 @@ def start_server():
                             print(f"⚠️  Chat endpoint returned status {chat_response.status_code}")
                             print(f"   Response: {chat_response.text[:200]}...")
                     except requests.exceptions.Timeout:
-                        print("⚠️  Chat endpoint test timed out (90s)")
-                        print("   This may be normal for first request (MedGemma loading)")
-                        print("   The server should still work once models are loaded")
+                        print("⚠️  Chat endpoint test timed out (3 minutes)")
+                        print("   This may be normal for first request (MedGemma downloading/loading)")
+                        print("   The server should still work - try the web interface manually")
+                        print("   First chat in browser may take 2-3 minutes, then it'll be fast")
                     except Exception as e:
                         print(f"⚠️  Chat endpoint test failed: {e}")
                         print("   Server may still be functional - try accessing manually")
@@ -397,9 +407,11 @@ def start_server():
                 print("   📚 API Docs: http://localhost:8000/docs")
             
             print("\n💡 Usage Tips:")
-            print("   • First chat may take 60-90s (MedGemma loading)")
-            print("   • Subsequent chats will be much faster")
+            print("   • First chat may take 2-3 minutes (MedGemma downloading/loading)")
+            print("   • Be patient! The model is 4GB+ and needs to load into memory")
+            print("   • Subsequent chats will be much faster (seconds)")
             print("   • Server runs in background - keep this cell running")
+            print("   • If chat times out, just wait and try again")
             print("   • Use Ctrl+C to stop server if needed")
             print("="*60)
             

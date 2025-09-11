@@ -38,8 +38,10 @@ async function sendMessage() {
         let botMessage = document.createElement("p");
         botMessage.className = "chat-message bot";
         
-        // Handle different response types
-        let responseText = data.response || data.response_text || "Sorry, I couldn't process your request.";
+        // Handle different response types with better debugging
+        console.log("Server response data:", data);
+        let responseText = data.response_text || data.response || "Sorry, I couldn't process your request.";
+        console.log("Using response text:", responseText);
         
         // If it's a multiple choice question, display choices
         if (data.response_type === "multiple_choice" && data.choices) {
