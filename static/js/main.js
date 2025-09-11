@@ -15,10 +15,17 @@ async function sendMessage() {
 
     // Call API
     try {
+        // Generate or get session ID
+        let sessionId = sessionStorage.getItem('session_id') || 'user_' + Date.now();
+        sessionStorage.setItem('session_id', sessionId);
+
         let response = await fetch(API_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ query: userInput })
+            body: JSON.stringify({ 
+                query: userInput, 
+                session_id: sessionId 
+            })
         });
 
         if (!response.ok) {
@@ -30,8 +37,19 @@ async function sendMessage() {
         // Display bot response
         let botMessage = document.createElement("p");
         botMessage.className = "chat-message bot";
-        botMessage.innerHTML = `<strong>Bot:</strong> ${data.response}`;
-
+        
+        // Handle different response types
+        let responseText = data.response || data.response_text || "Sorry, I couldn't process your request.";
+        
+        // If it's a multiple choice question, display choices
+        if (data.response_type === "multiple_choice" && data.choices) {
+            responseText += "<br><br><strong>Please select:</strong><br>";
+            data.choices.forEach((choice, index) => {
+                responseText += `${index + 1}. ${choice}<br>`;
+            });
+        }
+        
+        botMessage.innerHTML = `<strong>Bot:</strong> ${responseText}`;
         chatBox.appendChild(botMessage);
 
         // Scroll to latest message

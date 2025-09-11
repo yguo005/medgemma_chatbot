@@ -35,9 +35,10 @@ class OptimizedAIServiceManager:
             from src.services.ai.medgemma.medgemma_service import MedGemmaService
             self.services['medgemma_local'] = MedGemmaService(
                 model_name="google/medgemma-4b-it",
-                use_quantization=True  # Memory efficient for Colab - same as official notebook
+                use_quantization=None  # Auto-detect based on platform (Mac compatibility)
             )
-            logger.info(" Local MedGemma initialized (multimodal 4B-IT with 4-bit quantization)")
+            quant_status = "with auto-detected quantization" if self.services['medgemma_local'].use_quantization else "without quantization (Mac compatible)"
+            logger.info(f" Local MedGemma initialized (multimodal 4B-IT {quant_status})")
         except Exception as e:
             logger.warning(f" Local MedGemma failed: {e}")
             self.services['medgemma_local'] = None

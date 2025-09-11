@@ -29,22 +29,41 @@ class MedGemmaService:
         self, 
         model_name: str = "google/medgemma-4b-it",
         device: str = "auto",
-        use_quantization: bool = True,  # Default to True for Colab efficiency
+        use_quantization: bool = None,  # Auto-detect based on platform
         multimodal: Optional[bool] = None
     ):
         """
-        Initialize MedGemma service with LAZY LOADING and optimized for Colab demos.
-        - Defaults to 4-bit quantization for speed and memory.
+        Initialize MedGemma service with LAZY LOADING and Mac compatibility.
+        - Auto-detects quantization support (disabled on Mac due to CUDA requirement).
         - Uses only the direct, memory-efficient inference method.
         
         Args:
             model_name: HuggingFace model identifier.
             device: Device setting ("auto").
-            use_quantization: Enable 4-bit quantization.
+            use_quantization: Enable 4-bit quantization (auto-detected if None).
             multimodal: Auto-detected from model name.
         """
         self.model_name = model_name
-        self.use_quantization = use_quantization
+        
+        # Auto-detect quantization support
+        if use_quantization is None:
+            # Disable quantization on Mac (no CUDA), enable on Linux/Windows with CUDA
+            import platform
+            import torch
+            system = platform.system().lower()
+            has_cuda = torch.cuda.is_available()
+            
+            if system == "darwin":  # Mac
+                self.use_quantization = False
+                logger.info("  Mac detected: Disabling quantization (no CUDA support)")
+            elif has_cuda:
+                self.use_quantization = True
+                logger.info("  CUDA detected: Enabling 4-bit quantization")
+            else:
+                self.use_quantization = False
+                logger.info("  No CUDA detected: Disabling quantization")
+        else:
+            self.use_quantization = use_quantization
         
         # Extract model variant (following official notebook)
         self.model_variant = model_name.split("/")[-1].replace("medgemma-", "") if "/" in model_name else "4b-it"

@@ -61,7 +61,7 @@ class Chatbot:
                 service = MedGemmaService(
                     model_name="google/medgemma-4b-it",  # Same 4B model for both dev and prod
                     device="auto",
-                    use_quantization=True,
+                    use_quantization=None,  # Auto-detect based on platform (Mac compatible)
                     multimodal=True  # Enable multimodal capabilities
                 )
                 logger.info(" MedGemma local service initialized")
