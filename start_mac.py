@@ -8,11 +8,21 @@ import os
 import sys
 import subprocess
 import platform
+from dotenv import load_dotenv
 
 def setup_mac_environment():
     """Setup environment for Mac"""
     
-    print("🍎 Setting up AI Doctor for Mac...")
+    print(" Setting up AI Doctor for Mac...")
+
+    # Load .env file first
+    try:
+        load_dotenv()
+        print("✅ .env file loaded")
+    except ImportError:
+        print("⚠️  python-dotenv not available")
+    except Exception as e:
+        print(f"⚠️  Failed to load .env: {e}")
     
     # Set environment variables for Mac
     os.environ["AI_SERVICE_MODE"] = "hybrid"  # Use both MedGemma and OpenAI
@@ -45,19 +55,28 @@ def check_dependencies():
     """Check if dependencies are installed"""
     print("\n📦 Checking dependencies...")
     
-    required = [
-        "torch", "transformers", "accelerate", "pillow", "fastapi", 
-        "uvicorn", "langchain", "langchain-openai", "faiss-cpu", "openai"
-    ]
+    # Map package names to their import names
+    required = {
+        "torch": "torch",
+        "transformers": "transformers", 
+        "accelerate": "accelerate",
+        "pillow": "PIL",  # pillow imports as PIL
+        "fastapi": "fastapi",
+        "uvicorn": "uvicorn",
+        "langchain": "langchain",
+        "langchain-openai": "langchain_openai",
+        "faiss-cpu": "faiss",  # faiss-cpu imports as faiss
+        "openai": "openai"
+    }
     
     missing = []
-    for dep in required:
+    for package_name, import_name in required.items():
         try:
-            __import__(dep.replace("-", "_"))
-            print(f"  ✅ {dep}")
+            __import__(import_name)
+            print(f"  ✅ {package_name}")
         except ImportError:
-            print(f"  ❌ {dep} (missing)")
-            missing.append(dep)
+            print(f"  ❌ {package_name} (missing)")
+            missing.append(package_name)
     
     if missing:
         print(f"\n⚠️  Missing dependencies: {', '.join(missing)}")

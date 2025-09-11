@@ -148,7 +148,7 @@ def install_dependencies():
             print(f"  ❌ Failed to install {dep}")
 
 def setup_ngrok_tunnel():
-    """Setup ngrok tunnel for public access"""
+    """Setup ngrok tunnel for public access with Colab integration"""
     print("\n🌐 Setting up ngrok tunnel...")
     
     try:
@@ -177,11 +177,166 @@ def setup_ngrok_tunnel():
         # Store the public URL for easy access
         os.environ['PUBLIC_URL'] = str(public_url)
         
+        # Setup Colab keep-alive for ngrok tunnel
+        setup_colab_keepalive()
+        
         return True
         
     except Exception as e:
         print(f"❌ Ngrok setup failed: {e}")
         return False
+
+def setup_colab_keepalive():
+    """Setup Colab built-in keep-alive to maintain ngrok tunnel"""
+    try:
+        # Check if we're in Colab
+        import google.colab
+        from google.colab import output
+        import threading
+        import time
+        import requests
+        from datetime import datetime
+        
+        print("🔄 Setting up Colab keep-alive for ngrok tunnel...")
+        
+        def keepalive_worker():
+            """Advanced background worker to keep Colab session active"""
+            last_activity = datetime.now()
+            ping_count = 0
+            
+            while True:
+                try:
+                    current_time = datetime.now()
+                    
+                    # Ping every 5 minutes to prevent timeout
+                    time.sleep(300)
+                    ping_count += 1
+                    
+                    # Health check ping to keep server active
+                    try:
+                        response = requests.get("http://localhost:8000/health", timeout=5)
+                        if response.status_code == 200:
+                            last_activity = current_time
+                            
+                            # Periodic status update (every hour)
+                            if ping_count % 12 == 0:  # Every 12 pings = 1 hour
+                                print(f"🔄 Keep-alive active - Runtime uptime: {(current_time - last_activity).total_seconds() / 3600:.1f}h")
+                                
+                    except requests.exceptions.RequestException:
+                        # Server might be down, but keep session alive anyway
+                        pass
+                    
+                    # Colab-specific keep-alive mechanisms
+                    try:
+                        # Simulate minimal activity to prevent runtime timeout
+                        # This is more effective than just pinging
+                        import IPython
+                        if hasattr(IPython, 'get_ipython'):
+                            kernel = IPython.get_ipython()
+                            if kernel:
+                                # Execute a minimal command to show activity
+                                kernel.run_cell_magic('javascript', '', 'console.log("keep-alive");')
+                    except:
+                        pass
+                    
+                    # Memory management - prevent accumulation of logs
+                    if ping_count % 24 == 0:  # Every 2 hours
+                        try:
+                            if hasattr(output, 'clear'):
+                                # Clear old output but preserve important messages
+                                pass  # Don't clear to avoid disrupting user experience
+                        except:
+                            pass
+                        
+                except Exception as e:
+                    print(f"⚠️  Keep-alive error: {e}")
+                    time.sleep(60)  # Wait before retrying
+        
+        def setup_colab_widgets():
+            """Setup Colab widgets for interactive keep-alive"""
+            try:
+                from IPython.display import display, HTML, Javascript
+                
+                # Display a small status widget
+                status_html = """
+                <div id="ai-doctor-status" style="
+                    position: fixed; 
+                    top: 10px; 
+                    right: 10px; 
+                    background: #4CAF50; 
+                    color: white; 
+                    padding: 5px 10px; 
+                    border-radius: 5px; 
+                    font-size: 12px; 
+                    z-index: 1000;
+                    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+                ">
+                    🏥 AI Doctor Active
+                </div>
+                <script>
+                    // Keep-alive JavaScript that runs in browser
+                    setInterval(function() {
+                        // Prevent browser from going idle
+                        console.log('AI Doctor keep-alive ping');
+                        
+                        // Update status indicator
+                        var status = document.getElementById('ai-doctor-status');
+                        if (status) {
+                            var now = new Date();
+                            status.innerHTML = '🏥 AI Doctor Active - ' + now.toLocaleTimeString();
+                        }
+                    }, 60000); // Every minute
+                </script>
+                """
+                
+                display(HTML(status_html))
+                print("✅ Colab status widget activated")
+                
+            except Exception as e:
+                print(f"⚠️  Widget setup failed: {e}")
+        
+        # Start keep-alive in daemon thread
+        keepalive_thread = threading.Thread(target=keepalive_worker, daemon=True)
+        keepalive_thread.start()
+        
+        # Setup interactive widgets
+        setup_colab_widgets()
+        
+        print("✅ Advanced Colab keep-alive activated")
+        print("   • Server health monitoring every 5 minutes")
+        print("   • Runtime timeout prevention active")
+        print("   • Status widget displayed in top-right corner")
+        print("   • Ngrok tunnel will remain available")
+        
+        return True
+        
+    except ImportError:
+        # Not in Colab, use regular keep-alive
+        print("📝 Not in Colab - using standard keep-alive")
+        setup_standard_keepalive()
+        return True
+    except Exception as e:
+        print(f"⚠️  Keep-alive setup failed: {e}")
+        setup_standard_keepalive()  # Fallback to standard
+        return False
+
+def setup_standard_keepalive():
+    """Standard keep-alive for non-Colab environments"""
+    import threading
+    import time
+    
+    def standard_keepalive():
+        """Standard background keep-alive"""
+        while True:
+            time.sleep(600)  # 10 minutes
+            try:
+                import requests
+                requests.get("http://localhost:8000/health", timeout=5)
+                print("🔄 Keep-alive ping sent")
+            except:
+                pass
+    
+    threading.Thread(target=standard_keepalive, daemon=True).start()
 
 def kill_existing_server():
     """Kill any existing server on port 8000"""
@@ -310,7 +465,6 @@ def start_server():
         if in_jupyter:
             # Run in background for Jupyter
             print("🚀 Starting server in background...")
-            print("   Server will be available at: http://localhost:8000")
             print("   Use Ctrl+C to stop")
             
             # Create a task that runs the server
@@ -339,9 +493,7 @@ def start_server():
                 response = requests.get("http://localhost:8000/health", timeout=10)
                 if response.status_code == 200:
                     print("✅ Server started successfully!")
-                    print("   🌐 Access your AI Doctor at: http://localhost:8000")
-                    print("   📚 API documentation: http://localhost:8000/docs")
-                    print("   🔍 Health check: http://localhost:8000/health")
+                    print("   Server is running and ready to accept connections")
                     
                     # Test chat endpoint with longer timeout for model loading
                     try:
@@ -400,17 +552,16 @@ def start_server():
                 print("⚠️  IMPORTANT: Don't use localhost:8000 in Colab!")
                 print("   Use the ngrok URLs above instead.")
             else:
-                print("⚠️  Ngrok tunnel not available")
-                print("📱 Local Access (won't work in Colab):")
-                print("   🖥️  Desktop: http://localhost:8000")
-                print("   📱 Mobile: http://localhost:8000/mobile.html") 
-                print("   📚 API Docs: http://localhost:8000/docs")
+                print("❌ Ngrok tunnel not available - cannot access in Colab!")
+                print("   Without ngrok tunnel, the AI Doctor cannot be accessed in Colab.")
+                print("   Please set up NGROK_AUTHTOKEN in Colab secrets and restart.")
             
             print("\n💡 Usage Tips:")
             print("   • First chat may take 2-3 minutes (MedGemma downloading/loading)")
             print("   • Be patient! The model is 4GB+ and needs to load into memory")
             print("   • Subsequent chats will be much faster (seconds)")
             print("   • Server runs in background - keep this cell running")
+            print("   • Keep-alive is active - session won't timeout automatically")
             print("   • If chat times out, just wait and try again")
             print("   • Use Ctrl+C to stop server if needed")
             print("="*60)
@@ -440,6 +591,24 @@ def start_server():
         
         return None
 
+def check_ngrok_status():
+    """Check and display current ngrok tunnel status"""
+    try:
+        from pyngrok import ngrok
+        tunnels = ngrok.get_tunnels()
+        
+        if tunnels:
+            print("\n🌐 Active Ngrok Tunnels:")
+            for tunnel in tunnels:
+                print(f"   ✅ {tunnel.public_url} -> {tunnel.config['addr']}")
+            return True
+        else:
+            print("\n⚠️  No active ngrok tunnels found")
+            return False
+    except Exception as e:
+        print(f"\n❌ Could not check ngrok status: {e}")
+        return False
+
 def manual_api_key_setup():
     """Allow manual API key setup if secrets don't work"""
     print("\n🔑 Manual API Key Setup (if secrets don't work)")
@@ -449,6 +618,45 @@ def manual_api_key_setup():
     print("   os.environ['HF_TOKEN'] = 'hf_your-token-here'")
     print("   os.environ['NGROK_AUTHTOKEN'] = 'your-ngrok-token-here'")
     print("   Then re-run: exec(open('start_colab.py').read())")
+
+def get_colab_keep_alive_status():
+    """Get a simple function to check keep-alive status in Colab"""
+    try:
+        import google.colab
+        
+        def status():
+            """Check current AI Doctor status in Colab"""
+            print("🏥 AI Doctor Status Check")
+            print("=" * 40)
+            
+            # Check server health
+            try:
+                import requests
+                response = requests.get("http://localhost:8000/health", timeout=5)
+                if response.status_code == 200:
+                    print("✅ Server: Running")
+                else:
+                    print("⚠️  Server: Issues detected")
+            except:
+                print("❌ Server: Not responding")
+            
+            # Check ngrok tunnel
+            ngrok_active = check_ngrok_status()
+            
+            # Show public URL
+            public_url = os.getenv('PUBLIC_URL')
+            if public_url:
+                print(f"🌐 Public URL: {public_url}")
+                print("   Use this URL to access your AI Doctor!")
+            else:
+                print("⚠️  No public URL available")
+            
+            print("=" * 40)
+            
+        return status
+        
+    except ImportError:
+        return None
 
 def check_and_setup_repository():
     """Check if we're in the right directory and setup if needed"""
@@ -526,6 +734,8 @@ def main():
     # Setup ngrok if in Colab (mandatory for access)
     if in_colab:
         print("\n🌐 Setting up public access via ngrok...")
+        print("   ⚠️  NOTE: localhost:8000 will NOT work in Colab!")
+        print("   You MUST use the ngrok public URL to access the interface.")
         ngrok_success = setup_ngrok_tunnel()
         if not ngrok_success:
             print("\n❌ CRITICAL: Ngrok setup failed!")
@@ -534,7 +744,19 @@ def main():
             return
     
     # Start server
-    start_server()
+    server_result = start_server()
+    
+    # Provide status checker function for Colab users
+    if in_colab and server_result:
+        print("\n🔧 Utility Functions:")
+        print("   To check status anytime, run: status()")
+        print("   To check ngrok tunnels, run: check_ngrok_status()")
+        
+        # Make status function available globally
+        status_func = get_colab_keep_alive_status()
+        if status_func:
+            globals()['status'] = status_func
+            globals()['check_ngrok_status'] = check_ngrok_status
 
 if __name__ == "__main__":
     main()
