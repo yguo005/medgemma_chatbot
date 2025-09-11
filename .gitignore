@@ -1,0 +1,70 @@
+# Virtual environments
+ai_doctor_env/
+venv/
+env/
+.venv/
+
+# Environment variables (contains API keys!)
+.env
+.env.local
+.env.production
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Large data files and vectorstore
+data/vectorstore/
+*.faiss
+*.pkl
+
+# Logs
+*.log
+server.log
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+
+# Model files (too large for Git)
+models/
+*.bin
+*.safetensors
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
