@@ -67,4 +67,4 @@ var/
 wheels/
 *.egg-info/
 .installed.cfg
-*.egg
+*.eggserver.log
