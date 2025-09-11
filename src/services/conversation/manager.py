@@ -119,11 +119,24 @@ class ConversationManager:
                 return self._handle_general_query(session_id, message)
         except Exception as e:
             logger.error(f" Error processing message for session {session_id}: {e}", exc_info=True)
-            # Fallback response
+            
+            # More detailed error for debugging
+            error_details = str(e)
+            if "CUDA" in error_details or "bitsandbytes" in error_details:
+                error_msg = "The AI model is having hardware compatibility issues. Using fallback service."
+            elif "OpenAI" in error_details or "API" in error_details:
+                error_msg = "There's an issue with the AI service connection. Please try again."
+            elif "timeout" in error_details.lower():
+                error_msg = "The AI model is taking longer than expected to load. Please try again in a moment."
+            else:
+                error_msg = f"Sorry, something went wrong on our end. Please try again later. (Debug: {error_details[:100]})"
+            
+            # Fallback response with more context
             return {
                 "response_type": "error",
-                "response": "Sorry, something went wrong on our end. Please try again later.",
-                "session_id": session_id
+                "response_text": error_msg,
+                "session_id": session_id,
+                "debug_error": error_details if os.getenv("DEBUG", "false").lower() == "true" else None
             }
     
     async def _try_rag_question_generation(self, session_id: str, message: str, session: Dict, question_type: str) -> Optional[Dict[str, Any]]:
