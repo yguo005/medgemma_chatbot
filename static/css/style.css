@@ -64,4 +64,43 @@ button {
 }
 button:hover {
     background: #0056b3;
+}
+
+/* Choice buttons styling */
+.choices-container {
+    margin: 10px 0;
+    padding: 10px;
+    background-color: #f8f9fa;
+    border-radius: 8px;
+    border-left: 4px solid #007bff;
+}
+
+.choices-container strong {
+    display: block;
+    margin-bottom: 10px;
+    color: #333;
+    font-weight: 600;
+}
+
+.choice-button {
+    display: block;
+    width: 100%;
+    margin: 5px 0;
+    padding: 12px 15px;
+    background: #ffffff;
+    color: #333;
+    border: 2px solid #e9ecef;
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: left;
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+
+.choice-button:hover {
+    background: #007bff;
+    color: white;
+    border-color: #007bff;
+    transform: translateY(-1px);
+    box-shadow: 0 2px 4px rgba(0,123,255,0.2);
 } 

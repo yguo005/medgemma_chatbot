@@ -574,10 +574,7 @@ Example format:
                 raise Exception("OpenAI service not available for symptom extraction")
             
             openai_service = self.ai_service.services['openai']
-            response_text = await openai_service.enhance_diagnosis_with_rag(
-                extraction_prompt, 
-                ""  # No additional context needed for extraction
-            )
+            response_text = await openai_service.extract_structured_data(extraction_prompt)
             
             # Parse the JSON response
             structured_data = self._parse_ai_extraction_response(response_text)
@@ -665,8 +662,20 @@ Example format:
         Generate clinically relevant follow-up questions using medical encyclopedia context
         """
         try:
-            # Construct a prompt for the RAG service to generate a natural question
-            prompt_for_question_generation = f"""Based on the primary symptom "{primary_symptom}" and the collected information {collected_data}, formulate a natural, conversational question to ask about '{question_type}'."""
+            # Construct a very specific prompt that asks for ONLY the question text
+            prompt_for_question_generation = f"""Return only a single question about {question_type} for someone with {primary_symptom}.
+
+Do not include:
+- Multiple choice options
+- Numbered lists  
+- "Please select" text
+- Any explanations
+
+Just return the question. Examples:
+"How long have you been experiencing this headache?"
+"On a scale of 1-10, how would you rate the intensity?"
+
+Question:"""
 
             # Call the RAG service with the question-generation prompt
             generated_question_text = await self.rag_service.generate_contextual_question(prompt_for_question_generation)

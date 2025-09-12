@@ -216,6 +216,7 @@ class OptimizedAIServiceManager:
                 "transcription": "Audio transcription failed. Please type your message.",
                 "error": str(e)
             }
+        
     async def generate_medical_response(self, query: str, context: str = "", **kwargs) -> Dict[str, Any]:
         """
         Generate comprehensive medical diagnostic response using all collected symptoms and answers.
@@ -346,12 +347,13 @@ For your safety, please consider:
         openai_service = self.services.get('openai')
         
         try:
-            response_text = await openai_service.enhance_diagnosis_with_rag(query, context)
-            logger.info(" Conversational response generated with OpenAI.")
+            # Use the specialized simple question generator for clean, concise questions
+            response_text = await openai_service.generate_simple_question(query)
+            logger.info("✅ Conversational question generated with OpenAI.")
             return {
                 "success": True,
                 "response": response_text,
-                "service_used": "openai_gpt4_conversational"
+                "service_used": "openai_gpt4_simple_question"
             }
         except Exception as e:
             logger.error(f" OpenAI conversational response failed: {e}")

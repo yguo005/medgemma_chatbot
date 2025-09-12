@@ -224,7 +224,61 @@ class AIServices:
             # Fall back to the original context or a safe message if context is empty
             return context if context else "I am sorry, but I am unable to process your request at the moment."
     
+    async def generate_simple_question(self, query: str) -> str:
+        """
+        Generate a simple, direct question without any additional context or explanation.
+        Used specifically for conversation flow questions.
+        """
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a concise question generator. Return only the requested question, nothing else."
+                    },
+                    {
+                        "role": "user",
+                        "content": query
+                    }
+                ],
+                max_tokens=50,  # Very short response
+                temperature=0.1  # Very consistent responses
+            )
+            
+            return response.choices[0].message.content.strip()
+            
+        except Exception as e:
+            logger.error(f"Simple question generation failed: {str(e)}")
+            return "Could you please provide more details?"
     
+    async def extract_structured_data(self, extraction_prompt: str) -> str:
+        """
+        Extract structured data from text using a focused prompt.
+        Used specifically for symptom extraction and data parsing tasks.
+        """
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a data extraction assistant. Follow the user's instructions exactly and return only the requested structured data format."
+                    },
+                    {
+                        "role": "user",
+                        "content": extraction_prompt
+                    }
+                ],
+                max_tokens=200,  # Enough for JSON but not for explanations
+                temperature=0  # Consistent, predictable responses
+            )
+            
+            return response.choices[0].message.content.strip()
+            
+        except Exception as e:
+            logger.error(f"Structured data extraction failed: {str(e)}")
+            raise e
     
     def _get_vision_prompt(self, context: str) -> str:
         """Get appropriate prompt based on context"""
