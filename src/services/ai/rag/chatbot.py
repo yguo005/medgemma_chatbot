@@ -43,26 +43,24 @@ class Chatbot:
         logger.info("RAG service initialized to use the central AI Service Manager.")
         # -----------------------------------------
 
-    async def get_response(self, query: str) -> str:
+    async def get_diagnostic_response(self, query: str) -> str:
         """
-        Get response from the chatbot, incorporating RAG.
-        This is a general-purpose method driven by the input query.
+        Gets a high-quality diagnostic response using the full RAG + prioritized AI model flow.
+        This should be used for the final summary where medical accuracy is paramount.
         """
         if not self.vector_store:
             logger.warning("Vector store not available, proceeding without RAG context.")
             context = ""
         else:
             try:
-                # 1. Retrieve relevant context from the vector store
                 retrieved_docs = self.vector_store.similarity_search(query, k=3)
                 context = " ".join([doc.page_content for doc in retrieved_docs])
-                logger.info(f"Retrieved clinical context: {context[:200]}...")
+                logger.info(f"Retrieved clinical context for diagnosis: {context[:200]}...")
             except Exception as e:
                 logger.error(f"Failed to retrieve from vector store: {e}")
                 context = ""
 
-        # 2. Generate a response using the injected AI Service Manager
-        # This respects the application's mode (e.g., cloud_first) and optimizations.
+        # Generate a response using the main, prioritized medical response generator
         response = await self.ai_service.generate_medical_response(
             query=query,
             context=context
@@ -71,9 +69,36 @@ class Chatbot:
         if response.get("success"):
             return response.get("response", "I am unable to provide a response at this time.")
         else:
-            # Fallback response if the AI service manager fails
-            logger.error(f"AI Service Manager failed to generate a response. Error: {response.get('error')}")
+            logger.error(f"AI Service Manager failed to generate diagnostic response. Error: {response.get('error')}")
             return "I apologize, but I'm having trouble processing your medical query right now."
+
+    async def generate_contextual_question(self, query: str) -> str:
+        """
+        Generates a contextual follow-up question using RAG + OpenAI for speed.
+        """
+        if not self.vector_store:
+            logger.warning("Vector store not available, proceeding without RAG context.")
+            context = ""
+        else:
+            try:
+                retrieved_docs = self.vector_store.similarity_search(query, k=3)
+                context = " ".join([doc.page_content for doc in retrieved_docs])
+                logger.info(f"Retrieved conversational context for question generation: {context[:200]}...")
+            except Exception as e:
+                logger.error(f"Failed to retrieve from vector store: {e}")
+                context = ""
+        
+        # Use the dedicated conversational response generator (which uses OpenAI)
+        response = await self.ai_service.generate_conversational_response(
+            query=query,
+            context=context
+        )
+
+        if response.get("success"):
+            return response.get("response", f"Can you please provide more details?")
+        else:
+            logger.error(f"AI Service Manager failed to generate conversational response. Error: {response.get('error')}")
+            return "Could you please tell me more?"
 
     def get_service_info(self) -> Dict[str, Any]:
         """Get information about the RAG service."""

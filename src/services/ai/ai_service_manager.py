@@ -209,18 +209,18 @@ class OptimizedAIServiceManager:
                 "transcription": "Audio transcription failed. Please type your message.",
                 "error": str(e)
             }
-    
     async def generate_medical_response(self, query: str, context: str = "", **kwargs) -> Dict[str, Any]:
         """
-        Generate medical text response with proper prioritization:
-        1. MedGemma (local)
-        2. MedGemma Model Garden (cloud)
-        3. OpenAI GPT-4o (emergency fallback)
+        Generate comprehensive medical diagnostic response using all collected symptoms and answers.
+        Prioritizes MedGemma (local/cloud) over OpenAI for medical accuracy.
         
         Args:
-            query: The medical query
-            context: Additional context
+            query: The medical query (diagnostic request)
+            context: Additional context including symptoms, duration, intensity, timing, etc.
             **kwargs: Additional parameters (max_length, temperature, etc.) for underlying services
+        
+        Returns:
+            Dict containing the diagnostic response and metadata
         """
         
         # Define service priority based on the manager's mode
@@ -231,7 +231,7 @@ class OptimizedAIServiceManager:
             service_priority = ['medgemma_local', 'medgemma_cloud', 'openai']
             logger.info("🏠 Hybrid mode: Prioritizing local MedGemma first")
             
-        logger.info(f"Service priority for text generation: {service_priority}")
+        logger.info(f"Service priority for diagnostic generation: {service_priority}")
 
         # Iterate through services based on priority
         for service_name in service_priority:
@@ -246,52 +246,115 @@ class OptimizedAIServiceManager:
                         
                         result = await medgemma_local.generate_medical_response(query=query, context=context, **kwargs)
                         if result.get('success'):
-                            logger.info("Response generated with local MedGemma")
+                            logger.info("✅ Diagnostic response generated with local MedGemma")
                             return {**result, "service_used": "medgemma_local"}
                         else:
                             logger.warning(f"Local MedGemma failed: {result.get('error', 'Unknown')}")
                     except Exception as e:
-                        logger.warning(f"Local MedGemma text generation failed with exception: {e}")
+                        logger.warning(f"Local MedGemma diagnostic generation failed with exception: {e}")
 
             elif service_name == 'medgemma_cloud':
                 medgemma_cloud = self.services.get('medgemma_cloud')
                 if medgemma_cloud:
                     try:
+                        # Format the comprehensive medical context for Model Garden
+                        system_instruction = "You are a medical AI assistant. Provide a comprehensive diagnostic analysis based on the patient's symptoms and answers."
+                        
+                        # Combine context and query into a medical consultation format
+                        medical_prompt = f"""Patient Information and Symptoms:
+{context}
+
+Diagnostic Request:
+{query}
+
+Please provide a thorough medical analysis including:
+1. Possible conditions to consider
+2. Recommended next steps
+3. When to seek immediate medical attention
+4. Important disclaimers about professional medical consultation"""
+
                         messages = [
-                            {"role": "system", "content": "You are a helpful medical AI assistant."},
-                            {"role": "user", "content": f"{context}\\n\\n{query}" if context else query}
+                            {"role": "system", "content": system_instruction},
+                            {"role": "user", "content": medical_prompt}
                         ]
+                        
                         result = await medgemma_cloud.generate_medical_response(messages)
                         if result.get('success'):
-                            logger.info("Response generated with MedGemma Model Garden")
+                            logger.info("✅ Diagnostic response generated with MedGemma Model Garden")
                             return {**result, "service_used": "medgemma_cloud"}
                         else:
                             logger.warning(f"Model Garden failed: {result.get('error', 'Unknown')}")
                     except Exception as e:
-                        logger.warning(f"Model Garden text generation failed with exception: {e}")
+                        logger.warning(f"Model Garden diagnostic generation failed with exception: {e}")
 
             elif service_name == 'openai':
                 openai_fallback = self.services.get('openai')
                 if openai_fallback:
                     try:
-                        # Use the RAG enhancement as text generation fallback
-                        response_text = await openai_fallback.enhance_diagnosis_with_rag(query, context)
-                        logger.info("Response generated with OpenAI (fallback)")
+                        # Use OpenAI as the final fallback for diagnostic generation
+                        diagnostic_query = f"""Based on the following patient information, provide a comprehensive medical analysis:
+
+{context}
+
+Query: {query}
+
+Please provide:
+1. Possible medical conditions to consider
+2. Recommended actions and next steps
+3. Red flags that require immediate medical attention
+4. Clear disclaimer about consulting healthcare professionals
+
+Remember to be informative but not definitive in diagnosis."""
+
+                        response_text = await openai_fallback.enhance_diagnosis_with_rag(diagnostic_query, "")
+                        logger.info("⚠️  Diagnostic response generated with OpenAI (fallback)")
                         return {
                             "success": True,
                             "response": response_text,
-                            "service_used": "openai_gpt4_fallback"
+                            "service_used": "openai_gpt4_diagnostic_fallback"
                         }
                     except Exception as e:
-                        logger.error(f"OpenAI text generation failed with exception: {e}")
+                        logger.error(f"OpenAI diagnostic generation failed with exception: {e}")
 
-        # All services failed
+        # All services failed - return a safe fallback response
+        logger.error("❌ All diagnostic generation services failed")
         return {
             "success": False,
-            "response": "I'm having trouble processing your request. Please consult a healthcare professional.",
-            "error": "All text generation services unavailable"
+            "response": """I'm having trouble processing your medical information right now. 
+
+For your safety, please consider:
+- Consulting with a healthcare professional about your symptoms
+- Seeking immediate medical attention if you have severe or worsening symptoms
+- Contacting emergency services if this is a medical emergency
+
+*This system is not a substitute for professional medical advice, diagnosis, or treatment.*""",
+            "error": "All diagnostic generation services unavailable"
         }
-    
+
+    async def generate_conversational_response(self, query: str, context: str = "") -> Dict[str, Any]:
+        """
+        Generates a conversational (non-diagnostic) response, always using OpenAI for speed and cost.
+        Used for tasks like generating follow-up questions.
+        """
+        openai_service = self.services.get('openai')
+        
+        try:
+            response_text = await openai_service.enhance_diagnosis_with_rag(query, context)
+            logger.info(" Conversational response generated with OpenAI.")
+            return {
+                "success": True,
+                "response": response_text,
+                "service_used": "openai_gpt4_conversational"
+            }
+        except Exception as e:
+            logger.error(f" OpenAI conversational response failed: {e}")
+            # Fallback to a simple, hard-coded response
+            return {
+                "success": False,
+                "response": "Could you please provide more details?",
+                "error": str(e)
+            }
+
     def get_service_status(self) -> Dict[str, Any]:
         """Get comprehensive service status"""
         return {

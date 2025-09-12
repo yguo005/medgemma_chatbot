@@ -286,11 +286,12 @@ class ConversationManager:
         final_explanation_result = {"explanation": "", "success": False}
         if self.rag_service:
             try:
-                final_explanation_result = await self._generate_final_explanation_with_rag(diagnosis['title'])
-                logger.info(f" Generated Phase 3 final explanation: {final_explanation_result['explanation'][:100]}...")
+                # This call uses the full RAG + MedGemma-prioritized flow for maximum accuracy
+                final_explanation = await self.rag_service.get_diagnostic_response(final_prompt)
+                
+                logger.info("Final explanation generated with RAG + MedGemma-prioritized service.")
             except Exception as e:
-                logger.warning(f" Phase 3 explanation generation failed: {e}")
-                final_explanation_result = self._generate_fallback_explanation(diagnosis['title'])
+                logger.error(f"Failed to generate final explanation with RAG: {e}")
         else:
             logger.info(" RAG service not available, using fallback explanation")
             final_explanation_result = self._generate_fallback_explanation(diagnosis['title'])
