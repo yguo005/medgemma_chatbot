@@ -9,6 +9,28 @@ import sys
 import subprocess
 import platform
 
+# --- FIX: Add Colab-specific authentication ---
+try:
+    import google.colab
+    from google.colab import auth
+    print("Authenticating Google Colab user...")
+    auth.authenticate_user()
+    print("✅ Colab user authenticated.")
+    
+    # Set the project ID for gcloud commands
+    gcp_project_id = os.getenv("GCP_PROJECT_ID")
+    if gcp_project_id:
+        subprocess.run(['gcloud', 'config', 'set', 'project', gcp_project_id], capture_output=True)
+        print(f"✅ Google Cloud project set to: {gcp_project_id}")
+    else:
+        print("⚠️ GCP_PROJECT_ID not found in environment for gcloud config.")
+
+except ImportError:
+    print("Not in a Colab environment, skipping Colab-specific authentication.")
+except Exception as e:
+    print(f"⚠️ An error occurred during Colab authentication: {e}")
+# ----------------------------------------------
+
 def setup_colab_environment():
     """Setup environment for Google Colab with T4 GPU"""
     

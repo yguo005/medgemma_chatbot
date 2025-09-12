@@ -686,57 +686,17 @@ Example format:
             if not generated_question_text:
                 raise ValueError("RAG service returned an empty question.")
             
-            # Step 2: Construct user data context
-            user_context = self._construct_user_data_context(collected_data)
-            
-            # Step 3: Generate dynamic question using AI + RAG
-            question_prompt = f"""You are a medical AI assistant generating the next most important follow-up question for a patient assessment.
+            # The RAG service now returns a complete, conversational question.
+            # We no longer need to build a complex prompt here.
+            # We also get pre-defined choices for consistency.
+            choices = self._generate_fallback_question("symptom", question_type)['choices']
 
-CLINICAL CONTEXT FROM MEDICAL ENCYCLOPEDIA:
-{clinical_context}
-
-CURRENT PATIENT DATA:
-{user_context}
-
-TASK: Based on the clinical context above and the patient's current data, what is the single most important {question_type} question to ask next?
-
-REQUIREMENTS:
-1. The question must be clinically relevant based on the medical encyclopedia context
-2. Consider what information would be most valuable for assessment
-3. Provide exactly 4 multiple-choice options
-4. Make the question specific to the patient's symptoms
-5. Use proper medical terminology but keep it patient-friendly
-
-OUTPUT FORMAT (JSON only):
-{{
-  "question": "Your specific question here",
-  "choices": ["Option 1", "Option 2", "Option 3", "Option 4"],
-  "clinical_rationale": "Brief explanation of why this question is important"
-}}
-
-Return ONLY the JSON object, no additional text."""
-
-            # Call AI service to generate the question
-            ai_response = await self.ai_service.generate_medical_response(
-                query=question_prompt,
-                context=""
-            )
-            
-            if ai_response.get('success'):
-                response_text = ai_response.get('response', '')
-            else:
-                raise Exception(f"AI service error: {ai_response.get('error', 'Unknown error')}")
-            
-            # Parse the AI-generated question
-            dynamic_question = self._parse_dynamic_question_response(response_text)
-            
-            logger.info(f" Generated dynamic question: {dynamic_question['question']}")
+            logger.info(f" Generated dynamic question: {generated_question_text}")
             
             return {
                 "response_type": "multiple_choice",
-                "response_text": dynamic_question['question'],
-                "choices": dynamic_question['choices'],
-                "clinical_rationale": dynamic_question.get('clinical_rationale', ''),
+                "response_text": generated_question_text,
+                "choices": choices,
                 "generation_method": "rag_dynamic"
             }
             
