@@ -42,9 +42,7 @@ try:
     # This is used for dynamic, context-aware question generation.
     rag_service = Chatbot(
         openai_api_key=OPENAI_API_KEY,
-        use_medgemma_garden=USE_MEDGEMMA_GARDEN,
-        gcp_project_id=GCP_PROJECT_ID,
-        endpoint_id=MEDGEMMA_ENDPOINT_ID
+        ai_service=ai_service_manager  # Inject the AI service manager
     )
     logger.info(" RAG Service (Chatbot) initialized.")
 
@@ -127,9 +125,11 @@ async def chat(query_request: QueryRequest):
             }
 
         # Step 2: Process with conversation manager
+        # OPTIMIZATION: Initial symptom extraction now uses OpenAI (fast)
+        # while final diagnosis uses MedGemma Model Garden (specialized)
         response = await conversation_manager.process_message(session_id, query_text, is_choice)
         
-        # Step 3: Enhanced diagnosis with MedGemma + RAG + Safety
+        # Step 3: Enhanced diagnosis with MedGemma Model Garden + RAG + Safety
         if response.get('response_type') == 'diagnostic' and rag_service:
             try:
                 session = conversation_manager.get_session(session_id)

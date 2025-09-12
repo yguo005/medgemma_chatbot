@@ -567,16 +567,28 @@ Example format:
 }}"""
 
         try:
-            # Call AI service for extraction - all services support generate_medical_response
-            ai_response = await self.ai_service.generate_medical_response(
-                query=extraction_prompt,
-                context=""
-            )
-            
-            if ai_response.get('success'):
-                response_text = ai_response.get('response', '')
+            # OPTIMIZATION: Use OpenAI specifically for symptom extraction (fast and efficient)
+            # Reserve MedGemma Model Garden for the complex diagnostic summary at the end
+            if hasattr(self.ai_service, 'services') and self.ai_service.services.get('openai'):
+                # Direct call to OpenAI for extraction - faster and more cost-effective
+                openai_service = self.ai_service.services['openai']
+                response_text = await openai_service.enhance_diagnosis_with_rag(
+                    extraction_prompt, 
+                    ""  # No additional context needed for extraction
+                )
+                logger.info("✅ Using OpenAI for fast symptom extraction")
             else:
-                raise Exception(f"AI service error: {ai_response.get('error', 'Unknown error')}")
+                # Fallback to whatever AI service is available (for backward compatibility)
+                ai_response = await self.ai_service.generate_medical_response(
+                    query=extraction_prompt,
+                    context=""
+                )
+                
+                if ai_response.get('success'):
+                    response_text = ai_response.get('response', '')
+                else:
+                    raise Exception(f"AI service error: {ai_response.get('error', 'Unknown error')}")
+                logger.info("⚠️  Using fallback AI service for symptom extraction")
             
             # Parse the JSON response
             structured_data = self._parse_ai_extraction_response(response_text)

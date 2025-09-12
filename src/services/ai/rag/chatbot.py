@@ -7,123 +7,78 @@ from config.settings import DB_FAISS_PATH, EMBEDDING_MODEL
 from src.services.ai.medgemma.medgemma_service import MedGemmaService
 from src.services.ai.medgemma.model_garden import MedGemmaModelGarden
 import logging
+from typing import Dict, Any
 
+# Set up logging
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class Chatbot:
-    def __init__(self, openai_api_key: str, use_medgemma_garden: bool = False, gcp_project_id: str = None, endpoint_id: str = None):
-        if not openai_api_key:
-            raise ValueError(" ERROR: OpenAI API Key is missing!")
+    """
+    Chatbot class that integrates a FAISS vector store with an AI service.
+    This class is responsible for Retrieval-Augmented Generation (RAG).
+    """
+    def __init__(self, openai_api_key: str, ai_service):
+        """
+        Initialize the Chatbot with a vector store and an AI service.
         
-        self.openai_api_key = openai_api_key
-        self.use_medgemma_garden = use_medgemma_garden
-        
-        # Load vector store (still using OpenAI embeddings for retrieval)
-        self.vectorstore = self._get_vectorstore()
-        
-        # Initialize MedGemma service (either local or Model Garden)
-        self.medgemma_service = self._initialize_medgemma_service(gcp_project_id, endpoint_id)
-        
-        # Create retriever
-        self.retriever = self._create_retriever()
-
-    def _get_vectorstore(self):
-        """Loads the FAISS vector store."""
+        Args:
+            openai_api_key: The API key for OpenAI embeddings.
+            ai_service: An initialized AI service manager that handles model interactions.
+        """
         try:
-            embedding_model = OpenAIEmbeddings(model=EMBEDDING_MODEL, openai_api_key=self.openai_api_key)
-            vectorstore = FAISS.load_local(DB_FAISS_PATH, embedding_model, allow_dangerous_deserialization=True)
-            
-            # Validate index
-            index = vectorstore.index
-            test_vector = embedding_model.embed_query("Test")
-            if index.d != len(test_vector):
-                raise ValueError("FAISS index dimension mismatch.")
-
-            logger.info(" FAISS vector store loaded successfully")
-            return vectorstore
+            # Initialize embeddings and vector store for RAG
+            self.embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
+            self.db_path = "data/vectorstore/db_faiss"
+            self.vector_store = FAISS.load_local(self.db_path, self.embeddings, allow_dangerous_deserialization=True)
+            logger.info("FAISS vector store loaded successfully")
         except Exception as e:
-            logger.error(f" Failed to load FAISS vector store: {e}")
-            return None
-
-    def _initialize_medgemma_service(self, gcp_project_id: str = None, endpoint_id: str = None):
-        """Initialize MedGemma service (Model Garden or local)."""
-        try:
-            if self.use_medgemma_garden and gcp_project_id:
-                # Use Model Garden (production)
-                service = MedGemmaModelGarden(
-                    project_id=gcp_project_id,
-                    endpoint_id=endpoint_id or os.getenv("MEDGEMMA_ENDPOINT_ID", ""),
-                    credentials_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-                )
-                logger.info(" MedGemma Model Garden service initialized")
-            else:
-                # Use local Hugging Face (development)
-                service = MedGemmaService(
-                    model_name="google/medgemma-4b-it",  # Same 4B model for both dev and prod
-                    device="auto",
-                    use_quantization=None,  # Auto-detect based on platform (Mac compatible)
-                    multimodal=True  # Enable multimodal capabilities
-                )
-                logger.info(" MedGemma local service initialized")
-            
-            return service
-        except Exception as e:
-            logger.error(f" Failed to initialize MedGemma service: {e}")
-            return None
-
-    def _create_retriever(self):
-        """Creates the retriever from vectorstore."""
-        if not self.vectorstore:
-            raise ValueError("Vector store not loaded.")
+            logger.error(f"Failed to load FAISS vector store: {e}")
+            self.vector_store = None
         
-        return VectorStoreRetriever(
-            vectorstore=self.vectorstore,
-            search_kwargs={"k": 3}  # Retrieve top 3 most relevant documents
-        )
+        # --- REFACTOR: Use Injected AI Service ---
+        # The Chatbot now depends on an external AI service manager,
+        # centralizing all AI logic and removing redundant clients.
+        self.ai_service = ai_service
+        logger.info("RAG service initialized to use the central AI Service Manager.")
+        # -----------------------------------------
 
     async def get_response(self, query: str) -> str:
-        """Gets a response using RAG + MedGemma architecture."""
-        try:
-            if not self.medgemma_service:
-                return "Sorry, the medical AI service is not available right now."
-            
-            # Step 1: Retrieve relevant medical knowledge using OpenAI embeddings
-            relevant_docs = self.retriever.invoke(query)
-            
-            # Step 2: Combine retrieved context
-            context = "\n\n".join([doc.page_content for doc in relevant_docs])
-            
-            # Step 3: Generate response using MedGemma with retrieved context
-            if hasattr(self.medgemma_service, 'analyze_symptoms_text'):
-                # Model Garden version
-                response = await self.medgemma_service.analyze_symptoms_text(query, context)
-                if response["success"]:
-                    return response["response"]
-                else:
-                    return "I apologize, but I'm having trouble processing your medical query right now."
-            else:
-                # Local service version
-                response = await self.medgemma_service.generate_medical_response(
-                    query=query,
-                    context=context,
-                    max_length=512,
-                    
-                )
-                if response["success"]:
-                    return response["response"]
-                else:
-                    return "I apologize, but I'm having trouble processing your medical query right now."
-                    
-        except Exception as e:
-            logger.error(f" Error in get_response: {e}\n{traceback.format_exc()}")
-            return "Sorry, I encountered an error while processing your query."
+        """
+        Get response from the chatbot, incorporating RAG.
+        This is a general-purpose method driven by the input query.
+        """
+        if not self.vector_store:
+            logger.warning("Vector store not available, proceeding without RAG context.")
+            context = ""
+        else:
+            try:
+                # 1. Retrieve relevant context from the vector store
+                retrieved_docs = self.vector_store.similarity_search(query, k=3)
+                context = " ".join([doc.page_content for doc in retrieved_docs])
+                logger.info(f"Retrieved clinical context: {context[:200]}...")
+            except Exception as e:
+                logger.error(f"Failed to retrieve from vector store: {e}")
+                context = ""
 
-    def get_service_info(self) -> dict:
-        """Get information about the current setup."""
+        # 2. Generate a response using the injected AI Service Manager
+        # This respects the application's mode (e.g., cloud_first) and optimizations.
+        response = await self.ai_service.generate_medical_response(
+            query=query,
+            context=context
+        )
+        
+        if response.get("success"):
+            return response.get("response", "I am unable to provide a response at this time.")
+        else:
+            # Fallback response if the AI service manager fails
+            logger.error(f"AI Service Manager failed to generate a response. Error: {response.get('error')}")
+            return "I apologize, but I'm having trouble processing your medical query right now."
+
+    def get_service_info(self) -> Dict[str, Any]:
+        """Get information about the RAG service."""
         return {
-            "vectorstore_loaded": self.vectorstore is not None,
-            "medgemma_service_loaded": self.medgemma_service is not None,
-            "using_model_garden": self.use_medgemma_garden,
-            "service_type": "Model Garden" if self.use_medgemma_garden else "Local Hugging Face",
-            "retriever_ready": self.retriever is not None
+            "rag_service_status": "healthy",
+            "vector_store_initialized": self.vector_store is not None,
+            "embedding_model": "text-embedding-ada-002"
         }

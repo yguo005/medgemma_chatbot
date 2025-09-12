@@ -226,8 +226,10 @@ class OptimizedAIServiceManager:
         # Define service priority based on the manager's mode
         if self.mode == ServiceMode.CLOUD_FIRST:
             service_priority = ['medgemma_cloud', 'medgemma_local', 'openai']
+            logger.info("🎯 Cloud-first mode: Prioritizing MedGemma Model Garden for diagnostic summaries")
         else:  # Default to hybrid or local_demo priority
             service_priority = ['medgemma_local', 'medgemma_cloud', 'openai']
+            logger.info("🏠 Hybrid mode: Prioritizing local MedGemma first")
             
         logger.info(f"Service priority for text generation: {service_priority}")
 
