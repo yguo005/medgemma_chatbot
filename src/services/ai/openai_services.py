@@ -224,43 +224,7 @@ class AIServices:
             # Fall back to the original context or a safe message if context is empty
             return context if context else "I am sorry, but I am unable to process your request at the moment."
     
-    async def analyze_symptoms_with_medgemma(
-        self, 
-        symptoms: str, 
-        duration: str = "", 
-        intensity: str = "", 
-        timing: str = ""
-    ) -> Dict[str, Any]:
-        """
-        Analyze symptoms using MedGemma Model Garden (mobile-optimized)
-        
-        Args:
-            symptoms: Primary symptoms
-            duration: How long symptoms have persisted
-            intensity: Severity of symptoms
-            timing: When symptoms occur
-        
-        Returns:
-            Dict containing medical analysis
-        """
-        if not self.use_medgemma or not self.medgemma_service:
-            return {
-                "success": False,
-                "error": "MedGemma Model Garden not available",
-                "response": "MedGemma analysis is not available. Using standard medical knowledge base."
-            }
-        
-        try:
-            result = await self.medgemma_service.analyze_symptoms(symptoms, duration, intensity, timing)
-            logger.info(" Symptoms analyzed with MedGemma Model Garden")
-            return result
-        except Exception as e:
-            logger.error(f" MedGemma Model Garden symptom analysis failed: {e}")
-            return {
-                "success": False,
-                "error": str(e),
-                "response": "I'm having trouble analyzing your symptoms right now. Please consult with a healthcare professional."
-            }
+    
     
     def _get_vision_prompt(self, context: str) -> str:
         """Get appropriate prompt based on context"""
@@ -296,7 +260,7 @@ class AIServices:
     def get_service_status(self) -> Dict[str, bool]:
         """Check the status of AI services"""
         status = {
-            "vision_available": True,  # GPT-4 Vision
+            "vision_available": True,  # GPT-4o
             "transcription_available": True,  # Whisper
             "text_generation_available": True,  # GPT-4
             "client_initialized": self.client is not None,
@@ -304,14 +268,6 @@ class AIServices:
             "service_type": "model-garden" if self.use_medgemma else "openai-only"
         }
         
-        # Add MedGemma Model Garden specific info if available
-        if self.medgemma_service:
-            medgemma_info = self.medgemma_service.get_model_info()
-            status.update({
-                "medgemma_model_loaded": medgemma_info["client_initialized"],
-                "medgemma_project_id": medgemma_info["project_id"],
-                "medgemma_endpoint": medgemma_info["endpoint"],
-                "medgemma_service": medgemma_info["service"]
-            })
+        
         
         return status 
