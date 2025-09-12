@@ -235,18 +235,37 @@ class AIServices:
                 messages=[
                     {
                         "role": "system",
-                        "content": "You are a concise question generator. Return only the requested question, nothing else."
+                        "content": """You are a medical question generator. Your ONLY job is to return a single question - nothing else.
+
+CRITICAL RULES:
+- Return ONLY the question text
+- NO "Please select:" text
+- NO numbered lists (1. 2. 3. 4.)
+- NO multiple choice options
+- NO explanations or summaries
+- NO additional text
+
+Example input: "Generate a question about headache duration"
+Example output: "How long have you been experiencing this headache?"
+
+That's it. Just the question."""
                     },
                     {
                         "role": "user",
                         "content": query
                     }
                 ],
-                max_tokens=50,  # Very short response
-                temperature=0.1  # Very consistent responses
+                max_tokens=30,  # Even shorter to prevent extra text
+                temperature=0  # Most consistent responses
             )
             
-            return response.choices[0].message.content.strip()
+            response_text = response.choices[0].message.content.strip()
+            
+            # Additional cleanup to remove any formatting that might slip through
+            response_text = response_text.replace("Please select:", "").strip()
+            response_text = response_text.split("\n")[0]  # Take only the first line
+            
+            return response_text
             
         except Exception as e:
             logger.error(f"Simple question generation failed: {str(e)}")

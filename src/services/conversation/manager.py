@@ -286,12 +286,30 @@ class ConversationManager:
         final_explanation_result = {"explanation": "", "success": False}
         if self.rag_service:
             try:
+                # Construct comprehensive medical query for final diagnosis
+                collected_data = session['collected_data']
+                final_prompt = f"""
+                Primary symptoms: {collected_data.get('symptoms', '')}
+                Duration: {collected_data.get('duration', '')}
+                Intensity: {collected_data.get('intensity', '')}
+                Timing: {collected_data.get('timing', '')}
+                Frequency: {collected_data.get('frequency', '')}
+                
+                Please provide medical information and recommendations for these symptoms.
+                """
+                
                 # This call uses the full RAG + MedGemma-prioritized flow for maximum accuracy
                 final_explanation = await self.rag_service.get_diagnostic_response(final_prompt)
+                final_explanation_result = {
+                    "explanation": final_explanation,
+                    "success": True,
+                    "generation_method": "rag_medgemma"
+                }
                 
                 logger.info("Final explanation generated with RAG + MedGemma-prioritized service.")
             except Exception as e:
                 logger.error(f"Failed to generate final explanation with RAG: {e}")
+                final_explanation_result = self._generate_fallback_explanation(diagnosis['title'])
         else:
             logger.info(" RAG service not available, using fallback explanation")
             final_explanation_result = self._generate_fallback_explanation(diagnosis['title'])
