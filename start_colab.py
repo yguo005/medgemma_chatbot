@@ -47,6 +47,28 @@ def setup_colab_environment():
         except Exception as e:
             print("⚠️  NGROK_AUTHTOKEN not found in Colab secrets (optional)")
             
+        # --- FIX: Load Google Cloud secrets for Model Garden ---
+        try:
+            gcp_project_id = userdata.get('GCP_PROJECT_ID')
+            if gcp_project_id and gcp_project_id.strip():
+                os.environ['GCP_PROJECT_ID'] = gcp_project_id.strip()
+                print("✅ GCP_PROJECT_ID loaded from Colab secrets")
+            else:
+                print("⚠️  GCP_PROJECT_ID is empty in Colab secrets")
+        except Exception as e:
+            print("⚠️  GCP_PROJECT_ID not found in Colab secrets. Model Garden will not work.")
+
+        try:
+            medgemma_endpoint_id = userdata.get('MEDGEMMA_ENDPOINT_ID')
+            if medgemma_endpoint_id and medgemma_endpoint_id.strip():
+                os.environ['MEDGEMMA_ENDPOINT_ID'] = medgemma_endpoint_id.strip()
+                print("✅ MEDGEMMA_ENDPOINT_ID loaded from Colab secrets")
+            else:
+                print("⚠️  MEDGEMMA_ENDPOINT_ID is empty in Colab secrets")
+        except Exception as e:
+            print("⚠️  MEDGEMMA_ENDPOINT_ID not found in Colab secrets. Will use default if available.")
+        # ---------------------------------------------------------
+            
     except ImportError:
         print("📝 Not in Google Colab, trying .env file...")
         # Fallback to .env file for local development

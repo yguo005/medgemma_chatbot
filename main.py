@@ -147,7 +147,7 @@ async def chat(query_request: QueryRequest):
                 """
                 
                 # Get enhanced response using MedGemma + RAG
-                enhanced_response = await rag_service.get_response(medical_query)
+                enhanced_response = await rag_service.get_diagnostic_response(medical_query)
                 
                 # Apply safety validation to the AI response
                 safety_validation = safety_guardrails.validate_response(enhanced_response)

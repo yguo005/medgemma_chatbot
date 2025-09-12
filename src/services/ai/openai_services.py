@@ -170,63 +170,59 @@ class AIServices:
                 except Exception as cleanup_error:
                     logger.warning(f" Failed to cleanup temp file: {cleanup_error}")
     
-    async def enhance_diagnosis_with_rag(self, symptoms: str, rag_response: str) -> str:
+    async def enhance_diagnosis_with_rag(self, query: str, context: str) -> str:
         """
-        Enhance diagnosis by combining user symptoms with RAG system response
-        Uses MedGemma Model Garden if available, otherwise falls back to GPT-4o
-        
+        Enhances a response by combining a query with context using the GPT-4o model.
+        This method acts as the text-generation engine for the OpenAI service,
+        used for conversational responses, initial symptom extraction, and as a
+        diagnostic fallback.
+
         Args:
-            symptoms: User-described symptoms
-            rag_response: Response from RAG system
-        
+            query: The primary question or text to be processed.
+            context: Supporting information from the RAG system or conversation history.
+
         Returns:
-            Enhanced diagnosis text
+            An enhanced text response from the GPT-4o model.
         """
-        # Try MedGemma Model Garden first if available
-        if self.use_medgemma and self.medgemma_service:
-            try:
-                enhanced_response = await self.medgemma_service.enhance_diagnosis(symptoms, rag_response)
-                logger.info(" Diagnosis enhanced with MedGemma Model Garden")
-                return enhanced_response
-            except Exception as e:
-                logger.warning(f" MedGemma Model Garden enhancement failed, falling back to GPT-4: {e}")
-        
-        # Fallback to GPT-4
         try:
+            # The AIServiceManager has already determined this is the correct service to use.
+            # This method's single responsibility is to execute the OpenAI call.
             response = self.client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-4o", # Use the latest powerful and cost-effective model
                 messages=[
                     {
                         "role": "system",
-                        "content": """You are a medical AI assistant. Your role is to synthesize user symptoms with medical knowledge to provide helpful information. Always remind users to consult healthcare professionals for proper diagnosis and treatment."""
+                        "content": """You are a medical AI assistant. Your role is to synthesize user queries with medical knowledge to provide helpful information. Always remind users to consult healthcare professionals for proper diagnosis and treatment. Structure your response clearly and use supportive language."""
                     },
                     {
                         "role": "user",
                         "content": f"""
-                        Based on these symptoms: {symptoms}
-                        
-                        And this medical information: {rag_response}
-                        
+                        Based on the following information:
+                        ---CONTEXT---
+                        {context}
+                        ---END CONTEXT---
+
+                        Please address this query: "{query}"
+
                         Provide a clear, helpful summary that:
-                        1. Acknowledges the symptoms
-                        2. Relates them to the medical information
-                        3. Suggests appropriate next steps
-                        4. Reminds the user to consult a healthcare professional
-                        
-                        Keep the response concise and supportive.
+                        1. Directly answers the query.
+                        2. Incorporates relevant information from the context.
+                        3. Suggests appropriate next steps if applicable.
+                        4. Includes a reminder to consult a healthcare professional for medical advice.
                         """
                     }
                 ],
-                max_tokens=300,
+                max_tokens=400, # Increased token limit for more comprehensive summaries
                 temperature=0.3
             )
             
-            logger.info(" Diagnosis enhanced with GPT-4")
+            logger.info(" Response generated with OpenAI GPT-4o.")
             return response.choices[0].message.content
             
         except Exception as e:
-            logger.error(f" RAG enhancement failed: {str(e)}")
-            return rag_response  # Fall back to original RAG response
+            logger.error(f" OpenAI RAG enhancement failed: {str(e)}")
+            # Fall back to the original context or a safe message if context is empty
+            return context if context else "I am sorry, but I am unable to process your request at the moment."
     
     async def analyze_symptoms_with_medgemma(
         self, 

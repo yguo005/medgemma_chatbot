@@ -677,15 +677,14 @@ Example format:
         Generate clinically relevant follow-up questions using medical encyclopedia context
         """
         try:
-            # Step 1: Retrieve relevant clinical context from medical encyclopedia
-            rag_query = f"{primary_symptom} assessment {question_type} clinical evaluation"
-            
-            logger.info(f" Retrieving RAG context for: {rag_query}")
-            
-            # Query the RAG system for relevant medical context
-            clinical_context = await self.rag_service.get_response(query=rag_query)
-            
-            logger.info(f" Retrieved clinical context: {clinical_context[:200]}...")
+            # Construct a prompt for the RAG service to generate a natural question
+            prompt_for_question_generation = f"""Based on the primary symptom "{primary_symptom}" and the collected information {collected_data}, formulate a natural, conversational question to ask about '{question_type}'."""
+
+            # Call the RAG service with the question-generation prompt
+            generated_question_text = await self.rag_service.generate_contextual_question(prompt_for_question_generation)
+
+            if not generated_question_text:
+                raise ValueError("RAG service returned an empty question.")
             
             # Step 2: Construct user data context
             user_context = self._construct_user_data_context(collected_data)

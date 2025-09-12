@@ -50,13 +50,20 @@ class OptimizedAIServiceManager:
             try:
                 from src.services.ai.medgemma.model_garden import MedGemmaModelGarden
                 gcp_project_id = os.getenv("GCP_PROJECT_ID")
-                if gcp_project_id:
+                medgemma_endpoint_id = os.getenv("MEDGEMMA_ENDPOINT_ID")
+                if gcp_project_id and medgemma_endpoint_id:
                     self.services['medgemma_cloud'] = MedGemmaModelGarden(
-                        project_id=gcp_project_id
+                        project_id=gcp_project_id,
+                        endpoint_id=medgemma_endpoint_id
                     )
                     logger.info(" MedGemma Model Garden initialized")
                 else:
                     self.services['medgemma_cloud'] = None
+                    if not gcp_project_id:
+                        logger.warning(" GCP_PROJECT_ID not set, Model Garden disabled.")
+                    if not medgemma_endpoint_id:
+                        logger.warning(" MEDGEMMA_ENDPOINT_ID not set, Model Garden disabled.")
+
             except Exception as e:
                 logger.warning(f" Model Garden failed: {e}")
                 self.services['medgemma_cloud'] = None
