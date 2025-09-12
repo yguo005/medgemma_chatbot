@@ -46,6 +46,7 @@ class MedGemmaModelGarden:
         # Note: This is for reference only - the actual model is determined by the endpoint
         self.model_name = "google/medgemma-4b-it"
         
+        # Initialize the client immediately
         self._initialize_client()
     
     def _initialize_client(self):
@@ -69,20 +70,35 @@ class MedGemmaModelGarden:
                 credentials=creds
             )
 
+            # --- CRITICAL FIX: Load the Vertex AI Endpoint ---
+            # This step was missing. We need the endpoint object to get its DNS.
+            if not self.endpoint_id:
+                logger.error("Vertex AI Endpoint ID is missing. Cannot initialize Model Garden client.")
+                raise ValueError("An ENDPOINT_ID is required for Model Garden.")
+            
+            self.endpoint = aiplatform.Endpoint(
+                endpoint_name=self.endpoint_id,
+                project=self.project_id,
+                location=self.location,
+            )
+            logger.info(f"Successfully retrieved Vertex AI Endpoint: {self.endpoint.display_name}")
+            # ---------------------------------------------------
+
             # Set up OpenAI-compatible client
             auth_req = google.auth.transport.requests.Request()
             creds.refresh(auth_req)
 
             # --- IMPROVEMENT: Use robust URL construction from official notebook ---
-            # Check for dedicated endpoint (default for Model Garden deployments)
+            # This logic is now functional because self.endpoint is loaded.
+            endpoint_resource_name = self.endpoint.resource_name
             try:
                 # Try to get the dedicated endpoint DNS - this is the primary method for Model Garden
                 dedicated_endpoint_dns = self.endpoint.gca_resource.dedicated_endpoint_dns
-                base_url = f"https://{dedicated_endpoint_dns}/v1beta1/{self.endpoint.resource_name}"
+                base_url = f"https://{dedicated_endpoint_dns}/v1beta1/{endpoint_resource_name}"
                 logger.info(f"🎯 Using dedicated endpoint DNS: {dedicated_endpoint_dns}")
             except AttributeError:
                 # Fallback to standard regional URL for non-dedicated endpoints
-                base_url = f"https://{self.location}-aiplatform.googleapis.com/v1beta1/{self.endpoint.resource_name}"
+                base_url = f"https://{self.location}-aiplatform.googleapis.com/v1beta1/{endpoint_resource_name}"
                 logger.info("📍 Using standard regional endpoint URL (non-dedicated)")
             
             self.openai_client = openai.OpenAI(base_url=base_url, api_key=creds.token)

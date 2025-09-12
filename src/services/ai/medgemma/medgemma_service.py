@@ -15,6 +15,7 @@ from transformers import (
     AutoProcessor
 )
 from concurrent.futures import ThreadPoolExecutor
+import platform
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -126,6 +127,19 @@ class MedGemmaService:
             logger.info(f" Loading MedGemma model: {self.model_name}")
             logger.info(f"   Quantization: {self.use_quantization}")
             
+            # Authenticate with Hugging Face if token is available
+            import os
+            hf_token = os.getenv("HF_TOKEN")
+            if hf_token:
+                try:
+                    from huggingface_hub import login
+                    login(token=hf_token)
+                    logger.info("   ✅ Authenticated with Hugging Face")
+                except Exception as e:
+                    logger.warning(f"   ⚠️ HF authentication failed: {e}")
+            else:
+                logger.warning("   ⚠️ HF_TOKEN not found - may fail for gated models")
+            
             # Check available memory and adjust settings
             import platform
             system = platform.system().lower()
@@ -137,11 +151,13 @@ class MedGemmaService:
             
             # Memory optimization for Mac
             if system == "darwin":  # Mac
-                model_kwargs["torch_dtype"] = torch.float16  # Use float16 instead of bfloat16 on Mac
+                # Use CPU-only for Mac to avoid MPS memory issues and improve stability
+                model_kwargs["torch_dtype"] = torch.float32  # float32 is more stable on Mac CPU
                 model_kwargs["low_cpu_mem_usage"] = True
-                logger.info("   Mac optimization: Using float16 and low_cpu_mem_usage")
+                model_kwargs["device_map"] = None  # Disable auto device mapping for manual CPU assignment
+                logger.info("   Mac optimization: Using CPU-only with float32 for stability")
             else:
-                model_kwargs["torch_dtype"] = torch.bfloat16  # Official default
+                model_kwargs["torch_dtype"] = torch.bfloat16  # Official default for CUDA devices
             
             # Add quantization if requested and supported
             if self.use_quantization:
@@ -164,7 +180,12 @@ class MedGemmaService:
                 self.model = AutoModelForImageTextToText.from_pretrained(self.model_name, **model_kwargs)
                 self.processor_or_tokenizer = AutoProcessor.from_pretrained(self.model_name)
             
-            logger.info(" MedGemma model loaded successfully following official notebook patterns")
+            # Ensure model is on CPU for Mac to guarantee stability
+            if system == "darwin":  # Mac
+                self.model = self.model.to("cpu")
+                logger.info("   Model explicitly moved to CPU for Mac compatibility")
+            
+            logger.info(" Medgemma model loaded successfully following official notebook patterns")
             
         except Exception as e:
             logger.error(f" Failed to load MedGemma model: {e}")
@@ -228,14 +249,27 @@ class MedGemmaService:
             # Adjust max_new_tokens following official notebook (4b model: 500 for text)
             max_new_tokens = min(max_new_tokens, 500)
             
-            # Run inference using the direct model method
+            # Run inference using the direct model method with timeout
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                self.executor,
-                self._generate_with_direct_model,
-                messages,
-                max_new_tokens
-            )
+            try:
+                # Use a longer timeout for Mac CPU inference
+                timeout_seconds = 60.0 if platform.system().lower() == "darwin" else 30.0
+                response = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        self.executor,
+                        self._generate_with_direct_model,
+                        messages,
+                        max_new_tokens
+                    ),
+                    timeout=timeout_seconds
+                )
+            except asyncio.TimeoutError:
+                logger.warning(f"MedGemma generation timed out ({timeout_seconds}s) - this can happen on Mac CPU")
+                return {
+                    "success": False,
+                    "response": "I'm having trouble processing your request as it's taking too long. Please try a shorter question or consult with a healthcare professional.",
+                    "error": "Generation timeout on Mac CPU"
+                }
             
             logger.info(f" MedGemma response generated successfully using direct method")
             
@@ -258,8 +292,8 @@ class MedGemmaService:
     
     def _generate_with_direct_model(self, messages: List[Dict[str, Any]], max_new_tokens: int) -> str:
         """
-        Generate text using direct model method (exact official notebook implementation).
-        This follows the official HuggingFace notebook pattern precisely.
+        Generate text using direct model method (Mac-optimized version).
+        This follows the official HuggingFace notebook pattern with Mac stability improvements.
         """
         # Apply chat template following official implementation exactly
         inputs = self.processor_or_tokenizer.apply_chat_template(
@@ -272,12 +306,30 @@ class MedGemmaService:
         
         input_len = inputs["input_ids"].shape[-1]
         
-        # Generate with inference mode (exact official pattern)
+        # Generate with inference mode (Mac-optimized settings)
         with torch.inference_mode():
+            # Mac-specific generation parameters for stability
+            if platform.system().lower() == "darwin":
+                generation_kwargs = dict(
+                    max_new_tokens=min(max_new_tokens, 150),  # Limit tokens for Mac CPU stability
+                    do_sample=True,
+                    temperature=0.7,
+                    top_p=0.9,
+                    pad_token_id=self.processor_or_tokenizer.eos_token_id,
+                    eos_token_id=self.processor_or_tokenizer.eos_token_id,
+                    use_cache=False  # Disable KV cache for stability on Mac
+                )
+            else:
+                generation_kwargs = dict(
+                    max_new_tokens=max_new_tokens,
+                    do_sample=True,
+                    temperature=0.7,
+                    pad_token_id=self.processor_or_tokenizer.eos_token_id
+                )
+                
             generation = self.model.generate(
                 **inputs, 
-                max_new_tokens=max_new_tokens, 
-                do_sample=False  # Following official notebook default
+                **generation_kwargs
             )
             generation = generation[0][input_len:]
         
@@ -400,8 +452,14 @@ class MedGemmaService:
             tokenize=True,
             return_dict=True,
             return_tensors="pt",
-        ).to(self.model.device, dtype=torch.bfloat16)
+        )
         
+        # Move inputs to the correct device and dtype
+        if platform.system().lower() == "darwin":
+             inputs = inputs.to(self.model.device) # Use default dtype for CPU
+        else:
+             inputs = inputs.to(self.model.device, dtype=torch.bfloat16)
+
         input_len = inputs["input_ids"].shape[-1]
         
         # Generate with inference mode (exact official pattern)

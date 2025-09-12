@@ -30,6 +30,8 @@ class OptimizedAIServiceManager:
     def _initialize_services(self):
         """Initialize services based on mode and availability"""
         
+        logger.info(f"Initializing AI Service Manager in '{self.mode.value}' mode.")
+        
         # Always try to initialize local MedGemma first
         try:
             from src.services.ai.medgemma.medgemma_service import MedGemmaService
@@ -141,11 +143,12 @@ class OptimizedAIServiceManager:
                 # Continue to fallback services
         
         # Priority 2: MedGemma Model Garden multimodal
-        if self.services.get('medgemma_cloud'):
+        model_garden_service = self.services.get('medgemma_cloud')
+        if model_garden_service:
             try:
                 # Convert to proper format for Model Garden
                 image_url = f"data:image/jpeg;base64,{image_data}"
-                result = await self.services['medgemma_cloud'].analyze_symptoms_multimodal(
+                result = await model_garden_service.analyze_symptoms_multimodal(
                     text_prompt="Analyze this medical image for any visible symptoms or conditions.",
                     image_url=image_url
                 )
@@ -161,9 +164,10 @@ class OptimizedAIServiceManager:
                 logger.warning(f"  Model Garden image analysis failed: {e}")
         
         # Priority 3: OpenAI GPT-4o (emergency fallback)
-        if self.services.get('openai'):
+        openai_service = self.services.get('openai')
+        if openai_service:
             try:
-                result = await self.services['openai'].analyze_image(image_data, context)
+                result = await openai_service.analyze_image(image_data, context)
                 if result.get('success'):
                     logger.info(" Image analyzed with OpenAI (fallback)")
                     return {
@@ -219,57 +223,66 @@ class OptimizedAIServiceManager:
             **kwargs: Additional parameters (max_length, temperature, etc.) for underlying services
         """
         
-        # Priority 1: Local MedGemma
-        medgemma_service = self.services.get('medgemma_local')
-        if medgemma_service:
-            try:
-                # First ensure the model is actually loaded and ready
-                await medgemma_service._ensure_model_loaded()
-                
-                # Check if service is actually ready
-                if not medgemma_service.is_service_ready():
-                    logger.warning("  Local MedGemma service exists but model failed to load")
-                    # Continue to next service
-                else:
-                    result = await medgemma_service.generate_medical_response(
-                        query=query, 
-                        context=context,
-                        **kwargs  # Forward all additional parameters
-                    )
-                    if result.get('success'):
-                        logger.info(" Response generated with local MedGemma")
-                        return result
-            except Exception as e:
-                logger.warning(f"  Local MedGemma text generation failed: {e}")
-        
-        # Priority 2: MedGemma Model Garden
-        if self.services.get('medgemma_cloud'):
-            try:
-                messages = [
-                    {"role": "system", "content": "You are a helpful medical AI assistant."},
-                    {"role": "user", "content": f"{context}\n\n{query}" if context else query}
-                ]
-                result = await self.services['medgemma_cloud'].generate_medical_response(messages)
-                if result.get('success'):
-                    logger.info(" Response generated with MedGemma Model Garden")
-                    return result
-            except Exception as e:
-                logger.warning(f"  Model Garden text generation failed: {e}")
-        
-        # Priority 3: OpenAI GPT-4o (emergency fallback)
-        if self.services.get('openai'):
-            try:
-                # Use the RAG enhancement as text generation fallback
-                result = await self.services['openai'].enhance_diagnosis_with_rag(query, context)
-                logger.info(" Response generated with OpenAI (fallback)")
-                return {
-                    "success": True,
-                    "response": result,
-                    "service_used": "openai_gpt4_fallback"
-                }
-            except Exception as e:
-                logger.error(f" OpenAI text generation failed: {e}")
-        
+        # Define service priority based on the manager's mode
+        if self.mode == ServiceMode.CLOUD_FIRST:
+            service_priority = ['medgemma_cloud', 'medgemma_local', 'openai']
+        else:  # Default to hybrid or local_demo priority
+            service_priority = ['medgemma_local', 'medgemma_cloud', 'openai']
+            
+        logger.info(f"Service priority for text generation: {service_priority}")
+
+        # Iterate through services based on priority
+        for service_name in service_priority:
+            if service_name == 'medgemma_local':
+                medgemma_local = self.services.get('medgemma_local')
+                if medgemma_local:
+                    try:
+                        await medgemma_local._ensure_model_loaded()
+                        if not medgemma_local.is_service_ready():
+                            logger.warning("Local MedGemma service exists but model is not ready.")
+                            continue
+                        
+                        result = await medgemma_local.generate_medical_response(query=query, context=context, **kwargs)
+                        if result.get('success'):
+                            logger.info("Response generated with local MedGemma")
+                            return {**result, "service_used": "medgemma_local"}
+                        else:
+                            logger.warning(f"Local MedGemma failed: {result.get('error', 'Unknown')}")
+                    except Exception as e:
+                        logger.warning(f"Local MedGemma text generation failed with exception: {e}")
+
+            elif service_name == 'medgemma_cloud':
+                medgemma_cloud = self.services.get('medgemma_cloud')
+                if medgemma_cloud:
+                    try:
+                        messages = [
+                            {"role": "system", "content": "You are a helpful medical AI assistant."},
+                            {"role": "user", "content": f"{context}\\n\\n{query}" if context else query}
+                        ]
+                        result = await medgemma_cloud.generate_medical_response(messages)
+                        if result.get('success'):
+                            logger.info("Response generated with MedGemma Model Garden")
+                            return {**result, "service_used": "medgemma_cloud"}
+                        else:
+                            logger.warning(f"Model Garden failed: {result.get('error', 'Unknown')}")
+                    except Exception as e:
+                        logger.warning(f"Model Garden text generation failed with exception: {e}")
+
+            elif service_name == 'openai':
+                openai_fallback = self.services.get('openai')
+                if openai_fallback:
+                    try:
+                        # Use the RAG enhancement as text generation fallback
+                        response_text = await openai_fallback.enhance_diagnosis_with_rag(query, context)
+                        logger.info("Response generated with OpenAI (fallback)")
+                        return {
+                            "success": True,
+                            "response": response_text,
+                            "service_used": "openai_gpt4_fallback"
+                        }
+                    except Exception as e:
+                        logger.error(f"OpenAI text generation failed with exception: {e}")
+
         # All services failed
         return {
             "success": False,

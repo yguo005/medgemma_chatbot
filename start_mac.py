@@ -25,9 +25,10 @@ def setup_mac_environment():
         print(f"⚠️  Failed to load .env: {e}")
     
     # Set environment variables for Mac
-    os.environ["AI_SERVICE_MODE"] = "hybrid"  # Use both MedGemma and OpenAI
+    os.environ["AI_SERVICE_MODE"] = "hybrid"  # Use hybrid mode (MedGemma + OpenAI fallback)
     os.environ["DEPLOYMENT_MODE"] = "development"
     os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"  # Fix OpenMP issues
+    
     
     # Check Mac architecture
     arch = platform.machine()
@@ -107,6 +108,30 @@ def check_openai_key():
     print("     Add to .env file: OPENAI_API_KEY=your-key-here")
     return False
 
+def check_hf_token():
+    """Check Hugging Face token for MedGemma access"""
+    print("\n🤗 Checking Hugging Face token...")
+    
+    # Check environment variable
+    if os.getenv("HF_TOKEN"):
+        print("  ✅ HF_TOKEN found in environment")
+        return True
+    
+    # Check .env file
+    env_path = ".env"
+    if os.path.exists(env_path):
+        with open(env_path, 'r') as f:
+            content = f.read()
+            if "HF_TOKEN=" in content and "hf_" in content:
+                print("  ✅ HF_TOKEN found in .env")
+                return True
+    
+    print("  ❌ HF_TOKEN not found")
+    print("     MedGemma model requires Hugging Face authentication")
+    print("     Add to .env file: HF_TOKEN=hf_your_token_here")
+    print("     Get token from: https://huggingface.co/settings/tokens")
+    return False
+
 def check_vector_store():
     """Check if FAISS vector store exists"""
     print("\n🗃️  Checking vector store...")
@@ -135,8 +160,8 @@ def start_server():
         cmd = [
             sys.executable, "-m", "uvicorn", "main:app",
             "--host", "0.0.0.0",
-            "--port", "8000",
-            "--reload"
+            "--port", "8000"
+            # Removed --reload to prevent interruptions during chat
         ]
         
         print(f"   Command: {' '.join(cmd)}")
@@ -171,6 +196,10 @@ def main():
     # Check OpenAI key
     if not check_openai_key():
         print("\n⚠️  OpenAI API key recommended for full functionality")
+    
+    # Check Hugging Face token
+    if not check_hf_token():
+        print("\n⚠️  HF_TOKEN missing - MedGemma will fallback to OpenAI")
     
     # Check vector store
     if not check_vector_store():

@@ -65,11 +65,12 @@ def setup_colab_environment():
             print("⚠️  python-dotenv not available")
     
     # Set environment variables for Colab
-    os.environ["AI_SERVICE_MODE"] = "hybrid"  # Use both MedGemma and OpenAI
+    os.environ["AI_SERVICE_MODE"] = "cloud_first"  # Prioritize Model Garden
+    os.environ["USE_MEDGEMMA_GARDEN"] = "true"  # Explicitly enable Model Garden
     os.environ["DEPLOYMENT_MODE"] = "development"
     os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"  # Fix OpenMP issues
-    os.environ["DEBUG"] = "true"  # Enable debug mode for better error messages
-    os.environ["COLAB_MODE"] = "true"  # Enable Colab-specific compatibility
+   
+    
     
     # Check if we're in Colab
     try:
@@ -111,9 +112,7 @@ def setup_colab_environment():
     except ImportError:
         print("⚠️  PyTorch not available")
     
-    # Set fallback mode for Colab
-    os.environ["COLAB_MODE"] = "true"
-    print("🔧 Colab compatibility mode enabled")
+    
     
     return IN_COLAB
 
@@ -493,7 +492,6 @@ def start_server():
                 response = requests.get("http://localhost:8000/health", timeout=10)
                 if response.status_code == 200:
                     print("✅ Server started successfully!")
-                    print("   Server is running and ready to accept connections")
                     
                     # Test chat endpoint with longer timeout for model loading
                     try:
@@ -552,9 +550,11 @@ def start_server():
                 print("⚠️  IMPORTANT: Don't use localhost:8000 in Colab!")
                 print("   Use the ngrok URLs above instead.")
             else:
-                print("❌ Ngrok tunnel not available - cannot access in Colab!")
-                print("   Without ngrok tunnel, the AI Doctor cannot be accessed in Colab.")
-                print("   Please set up NGROK_AUTHTOKEN in Colab secrets and restart.")
+                print("⚠️  Ngrok tunnel not available")
+                print("📱 Local Access (won't work in Colab):")
+                print("   🖥️  Desktop: http://localhost:8000")
+                print("   📱 Mobile: http://localhost:8000/mobile.html") 
+                print("   📚 API Docs: http://localhost:8000/docs")
             
             print("\n💡 Usage Tips:")
             print("   • First chat may take 2-3 minutes (MedGemma downloading/loading)")
