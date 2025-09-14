@@ -47,34 +47,25 @@ class Chatbot:
         logger.info("RAG service initialized to use the central AI Service Manager.")
         # -----------------------------------------
 
-    async def get_diagnostic_response(self, query: str) -> str:
+    async def get_diagnostic_response(self, query: str) -> Dict[str, Any]:
         """
-        Gets a high-quality diagnostic response using the full RAG + prioritized AI model flow.
-        This should be used for the final summary where medical accuracy is paramount.
+        Generates a comprehensive diagnostic response using the AI Service Manager,
+        which prioritizes MedGemma for this critical task.
         """
-        if not self.vector_store:
-            logger.warning("Vector store not available, proceeding without RAG context.")
-            context = ""
-        else:
-            try:
-                retrieved_docs = self.vector_store.similarity_search(query, k=3)
-                context = " ".join([doc.page_content for doc in retrieved_docs])
-                logger.info(f"Retrieved clinical context for diagnosis: {context[:200]}...")
-            except Exception as e:
-                logger.error(f"Failed to retrieve from vector store: {e}")
-                context = ""
-
-        # Generate a response using the main, prioritized medical response generator
-        response = await self.ai_service.generate_medical_response(
-            query=query,
-            context=context
-        )
-        
-        if response.get("success"):
-            return response.get("response", "I am unable to provide a response at this time.")
-        else:
-            logger.error(f"AI Service Manager failed to generate diagnostic response. Error: {response.get('error')}")
-            return "I apologize, but I'm having trouble processing your medical query right now."
+        try:
+            # This call now correctly uses the ai_service_manager's logic
+            # to prioritize MedGemma Model Garden or local MedGemma.
+            # It returns the full dictionary from the service.
+            diagnostic_result = await self.ai_service.generate_medical_response(query)
+            return diagnostic_result
+            
+        except Exception as e:
+            logger.error(f"Error in RAG service getting diagnostic response: {e}", exc_info=True)
+            return {
+                "success": False,
+                "response": "An error occurred while generating the diagnostic analysis.",
+                "service_used": "error"
+            }
 
     async def generate_contextual_question(self, query: str) -> str:
         """
