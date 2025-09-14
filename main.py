@@ -159,19 +159,17 @@ async def chat(query_request: QueryRequest):
                     response['enhanced_with'] = 'MedGemma + RAG + Safety'
                     response['safety_validated'] = True
                 else:
-                    # Use fallback safe response
-                    response['diagnosis_description'] = """
-                    Based on your symptoms, I recommend consulting with a healthcare professional for proper evaluation and diagnosis. 
-                    They will be able to assess your condition thoroughly and provide appropriate medical advice and treatment options.
-                    
-                    *This information is for educational purposes only and is not a substitute for professional medical advice.*
-                    """
+                    logger.warning(f" Session {session_id}: AI response failed safety validation. Using fallback.")
+                    # Use a clean, safe fallback response and overwrite previous data
+                    response['diagnosis_title'] = "Medical Consultation Recommended"
+                    response['diagnosis_description'] = """Based on the information provided, it's recommended to consult with a healthcare professional for a proper evaluation. They can provide a personalized assessment and guide you on the best next steps."""
+                    response['final_explanation'] = "For your safety, I cannot provide a detailed analysis. A doctor can give you the most accurate information after a proper examination."
+                    response['recommendations'] = ["Schedule an appointment with a primary care physician.", "Consider visiting an urgent care clinic if symptoms worsen."]
                     response['enhanced_with'] = 'Safety Fallback'
                     response['safety_validated'] = False
-                    logger.warning(f" Session {session_id}: AI response failed safety validation")
                 
-                # Phase 3: Validate and enhance final explanation
-                if 'final_explanation' in response:
+                # Phase 3: Validate and enhance final explanation only if the initial response was safe
+                if safety_validation["is_safe"] and 'final_explanation' in response:
                     explanation_safety_check = safety_guardrails.validate_response(response['final_explanation'])
                     if explanation_safety_check["is_safe"]:
                         response['final_explanation'] = explanation_safety_check["filtered_response"]
@@ -195,7 +193,7 @@ async def chat(query_request: QueryRequest):
                 """
                 response['enhanced_with'] = 'Default Safe Response'
         
-        # Step 4: Final safety check on complete response
+        # Step 4: Final safety check on complete response (redundant if fallback is used, but safe)
         if 'diagnosis_description' in response:
             final_safety_check = safety_guardrails.validate_response(response['diagnosis_description'])
             if not final_safety_check["is_safe"]:
