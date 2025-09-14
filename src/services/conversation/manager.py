@@ -317,60 +317,43 @@ class ConversationManager:
         session = self.get_session(session_id)
         session['state'] = ConversationState.DIAGNOSIS
         
-        # Generate a preliminary diagnosis title based on collected data
-        diagnosis = self._generate_diagnosis(session['collected_data'])
-        
-        # Phase 3: Generate final explanation using RAG + AI
-        final_explanation_result = {"explanation": "", "success": False}
+        # Phase 3: Generate the single, comprehensive diagnostic response
+        final_diagnosis_response = {}
         if self.rag_service:
             try:
-                # Construct a more comprehensive prompt including all symptoms
-                collected_data = session['collected_data']
-                primary_symptom_details = f"""
-                - Primary Symptom: {collected_data.get('symptoms', '')}
-                - Duration: {collected_data.get('duration', '')}
-                - Intensity: {collected_data.get('intensity', '')}
-                - Timing: {collected_data.get('timing', '')}
-                - Frequency: {collected_data.get('frequency', '')}
-                """
-                associated_symptoms_details = f"- Other Symptoms: {collected_data.get('associated_symptoms_details', 'None')}"
-
-                final_prompt = f"""
-                Patient has provided the following information:
-                {primary_symptom_details}
-                {associated_symptoms_details}
-
-                Please provide a medical analysis and recommendations based on all these symptoms.
-                """
+                # Construct a comprehensive prompt including all collected data
+                final_prompt = self._construct_final_prompt(session)
                 
-                # This call uses the full RAG + MedGemma-prioritized flow
-                final_explanation = await self.rag_service.get_diagnostic_response(final_prompt)
-                final_explanation_result = {
-                    "explanation": final_explanation,
-                    "success": True,
-                    "generation_method": "rag_medgemma"
+                # This is now the SINGLE call to the diagnostic AI
+                ai_response = await self.rag_service.get_diagnostic_response(final_prompt)
+                
+                final_diagnosis_response = {
+                    "description": ai_response.get("response", "Could not generate a detailed analysis."),
+                    "source": ai_response.get("service_used", "rag_medgemma")
                 }
+                logger.info(f"Final diagnosis generated with {final_diagnosis_response['source']}.")
                 
-                logger.info("Final explanation generated with RAG + MedGemma-prioritized service.")
             except Exception as e:
-                logger.error(f"Failed to generate final explanation with RAG: {e}")
-                final_explanation_result = self._generate_fallback_explanation(diagnosis['title'])
+                logger.error(f"Failed to generate final diagnosis with RAG: {e}")
+                final_diagnosis_response['description'] = self._generate_fallback_explanation("symptoms")['explanation']
+                final_diagnosis_response['source'] = "fallback"
         else:
             logger.info(" RAG service not available, using fallback explanation")
-            final_explanation_result = self._generate_fallback_explanation(diagnosis['title'])
+            final_diagnosis_response['description'] = self._generate_fallback_explanation("symptoms")['explanation']
+            final_diagnosis_response['source'] = "fallback"
+
+        # Generate a preliminary diagnosis title based on collected data (this is rule-based and fast)
+        diagnosis_summary = self._generate_diagnosis(session['collected_data'])
         
-        self.add_to_history(session_id, message, f"Diagnosis: {diagnosis['title']}")
+        self.add_to_history(session_id, message, f"Diagnosis: {diagnosis_summary['title']}")
         
         return {
             "response_type": "diagnostic",
-            "diagnosis_title": diagnosis['title'],
-            "diagnosis_description": diagnosis['description'],
-            "final_explanation": final_explanation_result['explanation'],
-            "explanation_source": final_explanation_result.get('generation_method', 'unknown'),
-            "key_terms_explained": final_explanation_result.get('key_terms', []),
-            "recommendations": diagnosis['recommendations'],
-            "urgency_level": diagnosis.get('urgency_level', 'moderate'),
-            "next_action": "services"
+            "diagnosis_title": diagnosis_summary['title'],
+            "diagnosis_description": final_diagnosis_response['description'],
+            "recommendations": diagnosis_summary['recommendations'],
+            "urgency_level": diagnosis_summary.get('urgency_level', 'moderate'),
+            "generation_source": final_diagnosis_response['source']
         }
     
     def _handle_diagnosis(self, session_id: str, message: str) -> Dict[str, Any]:
