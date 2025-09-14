@@ -72,8 +72,7 @@ class OptimizedAIServiceManager:
                 from src.services.ai.openai_services import AIServices
                 if settings.OPENAI_CONFIG.get("api_key"):
                     self.services['openai'] = AIServices(
-                        api_key=settings.OPENAI_CONFIG["api_key"],
-                        use_medgemma=False  # Don't let it override our logic
+                        api_key=settings.OPENAI_CONFIG["api_key"]
                     )
                     logger.info(" OpenAI services initialized (audio + fallback)")
                 else:
