@@ -1,6 +1,7 @@
-# 1. primary and exclusive role of openai_services.py is to handle audio-to-text transcription (def transcribe_audio), because MedGemma does not have that capability
-# 2. acts as the crucial "emergency fallback" if gedgemma fails for text and image analysis in ai_service_manager.py
-# 3. Future Role: Cloud Services Gateway.  __init__ method in openai_services.py, it's also designed to initialize and manage MedGemmaModelGarden
+'''
+ 1. primary and exclusive role of openai_services.py is to handle audio-to-text transcription (def transcribe_audio), because MedGemma does not have that capability
+ 2. acts as the crucial "emergency fallback" if gedgemma fails for text and image analysis in ai_service_manager.py
+'''
 
 
 
@@ -17,38 +18,13 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class AIServices:
-    def __init__(self, api_key: str, use_medgemma: bool = False, gcp_project_id: str = None):
-        """Initialize AI services with OpenAI API key and optional MedGemma Model Garden"""
+    def __init__(self, api_key: str):
+        """Initialize AI services with OpenAI API key"""
         if not api_key:
             raise ValueError("OpenAI API key is required")
         
         self.client = OpenAI(api_key=api_key)
-        self.use_medgemma = use_medgemma
-        self.medgemma_service = None
-        
-        # Initialize MedGemma Model Garden if requested
-        if use_medgemma:
-            try:
-                if not gcp_project_id:
-                    gcp_project_id = os.getenv("GCP_PROJECT_ID")
-                
-                if not gcp_project_id:
-                    raise ValueError("GCP_PROJECT_ID is required for Model Garden")
-                
-                from src.services.ai.medgemma.medgemma_model_garden import MedGemmaModelGarden
-                self.medgemma_service = MedGemmaModelGarden(
-                    project_id=gcp_project_id,
-                    credentials_path=os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-                )
-                logger.info(" MedGemma Model Garden service initialized successfully")
-            except ImportError:
-                logger.warning(" Model Garden dependencies not available. Install: pip install google-cloud-aiplatform")
-                self.use_medgemma = False
-            except Exception as e:
-                logger.warning(f" MedGemma Model Garden initialization failed: {e}")
-                self.use_medgemma = False
-        
-        logger.info(" AI Services initialized successfully")
+        logger.info(" OpenAI Services client initialized successfully")
     
     async def analyze_image(self, image_data: str, context: str = "medical") -> Dict[str, Any]:
         """
@@ -333,14 +309,9 @@ That's it. Just the question."""
     def get_service_status(self) -> Dict[str, bool]:
         """Check the status of AI services"""
         status = {
-            "vision_available": True,  # GPT-4o
-            "transcription_available": True,  # Whisper
-            "text_generation_available": True,  # GPT-4
-            "client_initialized": self.client is not None,
-            "medgemma_available": self.use_medgemma and self.medgemma_service is not None,
-            "service_type": "model-garden" if self.use_medgemma else "openai-only"
+            "vision_available": True,
+            "transcription_available": True,
+            "text_generation_available": True,
+            "client_initialized": self.client is not None
         }
-        
-        
-        
         return status 

@@ -1,6 +1,8 @@
 """
 Optimized AI Service Manager
-Prioritizes MedGemma (local/cloud) over OpenAI for appropriate tasks
+Medgemma for final diagnosis result and openAi for symtoms extraction and questions generation
+Decouple the rest of the application from the specifics of the AI models.
+The ConversationManager and Chatbot don't need to know which AI model to use; they just need to ask the AIServiceManager for either a "high-accuracy medical response" or a "quick conversational response." 
 """
 
 import os

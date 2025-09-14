@@ -7,6 +7,9 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from dotenv import load_dotenv
 
+# Run this file once to "teach" the chatbot about the medical information in your PDFs. 
+# You would only need to run it again if you update or add new PDF documents to your knowledge base.
+
 # Detect environment and set correct project root
 current_file = Path(__file__).resolve()
 
