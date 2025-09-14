@@ -122,25 +122,58 @@ function handleBotResponse(data) {
     console.log("🔍 Server response data:", data);
 
     if (data.response_type === "diagnostic") {
-        const { diagnosis_title, diagnosis_description, recommendations, final_explanation } = data;
+        const { diagnosis_title, diagnosis_description, recommendations, services } = data;
+        
+        // 1. Build and append the diagnostic message using Markdown
         let fullResponseMarkdown = `### ${diagnosis_title}\n\n`;
-        if (diagnosis_description) fullResponseMarkdown += `${diagnosis_description}\n\n`;
-        if (final_explanation) fullResponseMarkdown += `**Explanation:** ${final_explanation}\n\n`;
+        if (diagnosis_description) {
+            fullResponseMarkdown += `${diagnosis_description}\n\n`;
+        }
         if (recommendations && recommendations.length > 0) {
             fullResponseMarkdown += `**Recommendations:**\n${recommendations.map(r => `* ${r}`).join('\n')}`;
         }
         appendMessage('bot', fullResponseMarkdown);
 
+        // 2. Check for and render services if they exist in the response
+        if (services && services.length > 0) {
+            appendServiceMessage(services);
+        }
+
     } else if (data.response_type === "multiple_choice") {
         appendMessage('bot', data.response_text, 'multiple_choice', data.choices);
 
-    } else if (data.response_type === "services") {
-        appendMessage('bot', "Here are some services that might help. Let me know if you'd like to book one.");
-        // Here you could also render the services list if needed
     } else {
         const responseText = data.response_text || data.response || "Sorry, I couldn't process your request.";
         appendMessage('bot', responseText);
     }
+}
+
+function appendServiceMessage(services) {
+    const chatbox = document.getElementById('chat-box');
+    
+    // Add a header for the services section
+    const serviceHeader = document.createElement('div');
+    serviceHeader.classList.add('chat-message', 'bot');
+    serviceHeader.innerHTML = `<strong>Bot:</strong> Here are some services that might help. You can book one by typing 'appointment'.`;
+    chatbox.appendChild(serviceHeader);
+
+    // Create a container for the service cards
+    const servicesContainer = document.createElement('div');
+    servicesContainer.classList.add('services-container');
+    
+    services.forEach(service => {
+        const serviceCard = document.createElement('div');
+        serviceCard.classList.add('service-card');
+        serviceCard.innerHTML = `
+            <h4>${service.title}</h4>
+            <p>${service.description}</p>
+            <p><strong>Price:</strong> $${service.price} | <strong>Duration:</strong> ${service.duration}</p>
+        `;
+        servicesContainer.appendChild(serviceCard);
+    });
+    
+    chatbox.appendChild(servicesContainer);
+    chatbox.scrollTop = chatbox.scrollHeight;
 }
 
 // --- UI Helpers ---

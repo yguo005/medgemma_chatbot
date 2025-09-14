@@ -312,6 +312,29 @@ class ConversationManager:
         session['collected_data']['associated_symptoms_details'] = message
         return await self._proceed_to_diagnosis(session_id, message)
 
+    def _construct_final_prompt(self, session: Dict[str, Any]) -> str:
+        """Constructs the final comprehensive prompt for the diagnostic AI."""
+        collected_data = session['collected_data']
+        primary_symptom_details = f"""
+        - Primary Symptom: {collected_data.get('symptoms', 'Not specified')}
+        - Duration: {collected_data.get('duration', 'Not specified')}
+        - Intensity: {collected_data.get('intensity', 'Not specified')}
+        - Timing: {collected_data.get('timing', 'Not specified')}
+        - Frequency: {collected_data.get('frequency', 'Not specified')}
+        """
+        associated_symptoms_details = f"- Other Symptoms: {collected_data.get('associated_symptoms_details', 'None')}"
+
+        final_prompt = f"""
+        Patient has provided the following information:
+        {primary_symptom_details}
+        {associated_symptoms_details}
+
+        Please provide a detailed medical analysis based on all available symptoms.
+        Consider possible conditions and explain your reasoning.
+        Do not include recommendations for next steps, as those are handled separately.
+        """
+        return final_prompt
+
     async def _proceed_to_diagnosis(self, session_id: str, message: str) -> Dict[str, Any]:
         """Generate the final diagnosis after all information is collected."""
         session = self.get_session(session_id)
@@ -347,19 +370,23 @@ class ConversationManager:
         
         self.add_to_history(session_id, message, f"Diagnosis: {diagnosis_summary['title']}")
         
+        # Transition state to SERVICES and get the services data
+        session['state'] = ConversationState.SERVICES
+        services_data = self._show_services(session_id)
+
         return {
             "response_type": "diagnostic",
             "diagnosis_title": diagnosis_summary['title'],
             "diagnosis_description": final_diagnosis_response['description'],
             "recommendations": diagnosis_summary['recommendations'],
             "urgency_level": diagnosis_summary.get('urgency_level', 'moderate'),
-            "generation_source": final_diagnosis_response['source']
+            "generation_source": final_diagnosis_response['source'],
+            "services": services_data.get('services', []) # Add services to the response
         }
     
     def _handle_diagnosis(self, session_id: str, message: str) -> Dict[str, Any]:
         """Handle post-diagnosis interaction and show services"""
         session = self.get_session(session_id)
-        session['state'] = ConversationState.SERVICES
         
         # Check if user has questions about the diagnosis
         question_keywords = ['what', 'how', 'why', 'explain', 'tell me more', 'details']
@@ -369,7 +396,8 @@ class ConversationManager:
                 "response": "I'd be happy to explain more. Based on your symptoms, I've provided a preliminary assessment. However, for a complete diagnosis and treatment plan, I recommend consulting with one of our healthcare professionals. Here are the available services:"
             }
         
-        return self._show_services(session_id)
+        # This now primarily handles booking or other service-related questions
+        return self._handle_services_state(session_id, message)
     
     def _handle_services_state(self, session_id: str, message: str) -> Dict[str, Any]:
         """Handle interactions in services state"""
@@ -422,7 +450,10 @@ class ConversationManager:
             }
     
     def _show_services(self, session_id: str) -> Dict[str, Any]:
-        """Show available services based on collected data"""
+        """
+        Prepare available services based on collected data.
+        This method now returns data, not a full response object.
+        """
         session = self.get_session(session_id)
         collected_data = session['collected_data']
         
@@ -469,13 +500,10 @@ class ConversationManager:
             ]
         
         return {
-            "response_type": "services",
             "services": services,
             "urgency_level": urgency
         }
     
-    # This is a rule-based method. 
-    # It uses simple if/elif logic based on keywords (e.g., "headache", "knee") to generate a quick, preliminary title and a list of recommendations. It does not call an AI.
     def _generate_diagnosis(self, collected_data: Dict) -> Dict[str, Any]:
         """Generate diagnosis based on collected symptoms with AI-enhanced logic"""
         symptoms = collected_data.get('symptoms', '').lower()
@@ -851,27 +879,10 @@ Question:"""
         """Generate fallback explanation when RAG+AI fails"""
         logger.info(f"Using fallback explanation for: {diagnosis_title}")
         
-        fallback_explanations = {
-            "headache": "Headaches are a common condition involving pain in the head or neck area. They can have various causes and it's important to consult with a healthcare professional for proper evaluation and treatment.",
-            "knee": "Knee problems can involve the bones, joints, or soft tissues of the knee area. A healthcare professional can help determine the cause and recommend appropriate treatment options.",
-            "chest": "Chest-related symptoms require prompt medical attention to ensure proper evaluation. A healthcare professional can assess your condition and provide appropriate guidance.",
-            "gastrointestinal": "Digestive symptoms can have various causes and may require medical evaluation. It's important to consult with a healthcare professional for proper assessment and treatment recommendations."
-        }
-        
-        # Find appropriate fallback based on diagnosis content
-        diagnosis_lower = diagnosis_title.lower()
         explanation = "This condition may require medical evaluation to determine the appropriate course of action. Please consult with a healthcare professional for proper assessment and guidance."
-        
-        for key, fallback_text in fallback_explanations.items():
-            if key in diagnosis_lower:
-                explanation = fallback_text
-                break
         
         return {
             "explanation": explanation,
-            "encyclopedia_context": "",
-            "key_terms": [],
-            "generation_method": "fallback",
             "success": False
         }
 
