@@ -203,7 +203,7 @@ class AIServices:
     async def generate_simple_question(self, query: str) -> str:
         """
         Generate a simple, direct question without any additional context or explanation.
-        Used specifically for conversation flow questions.
+        This is called by ai_service_manager.py's generate_conversational_response method, to generate dynamic questions in the conversation flow.
         """
         try:
             response = self.client.chat.completions.create(
@@ -250,7 +250,7 @@ That's it. Just the question."""
     async def extract_structured_data(self, extraction_prompt: str) -> str:
         """
         Extract structured data from text using a focused prompt.
-        Used specifically for symptom extraction and data parsing tasks.
+        This is called by the ConversationManager in _extract_symptoms_with_ai as the primary method for the initial symptom extraction.
         """
         try:
             response = self.client.chat.completions.create(

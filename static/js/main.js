@@ -1,150 +1,60 @@
 const API_URL = "http://127.0.0.1:8000/chat";
 
-async function selectChoice(choice, sessionId) {
-    // Remove all choice buttons after selection
-    let choicesContainers = document.querySelectorAll(".choices-container");
-    choicesContainers.forEach(container => container.remove());
-    
-    // Display the user's choice
-    let chatBox = document.getElementById("chat-box");
-    let userMessage = document.createElement("p");
-    userMessage.className = "chat-message user";
-    userMessage.innerHTML = `<strong>You:</strong> ${choice}`;
-    chatBox.appendChild(userMessage);
-    
-    // Send the choice to the server
-    try {
-        let response = await fetch(API_URL, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ 
-                query: choice, 
-                session_id: sessionId,
-                is_choice: true
-            })
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        let data = await response.json();
-        
-        // DEBUG: Log the response to see what we're getting
-        console.log("🔍 Server response data:", data);
-        console.log("🔍 response_type:", data.response_type);
-        console.log("🔍 choices:", data.choices);
-
-        // Display bot response based on response type
-        let botMessage = document.createElement("p");
-        botMessage.className = "chat-message bot";
-        
-        let responseText;
-        if (data.response_type === "diagnostic") {
-            // Handle diagnostic response
-            responseText = data.diagnosis_description || data.final_explanation || "Diagnosis complete.";
-            console.log("🔍 Diagnostic response received:", data.diagnosis_title);
-        } else if (data.response_type === "services") {
-            // Handle services response
-            responseText = "Thank you for providing your symptoms. Here are the available services:";
-            console.log("🔍 Services response received");
-        } else {
-            // Handle regular responses
-            responseText = data.response_text || data.response || "Sorry, I couldn't process your request.";
-        }
-        
-        console.log("🔍 Using response text:", responseText);
-        
-        botMessage.innerHTML = `<strong>Bot:</strong> ${responseText}`;
-        chatBox.appendChild(botMessage);
-        
-        // If it's a diagnostic response, show additional information
-        if (data.response_type === "diagnostic") {
-            if (data.diagnosis_title) {
-                let titleMessage = document.createElement("p");
-                titleMessage.className = "chat-message bot diagnosis-title";
-                titleMessage.innerHTML = `<strong>Diagnosis:</strong> ${data.diagnosis_title}`;
-                chatBox.appendChild(titleMessage);
-            }
-            
-            if (data.recommendations && data.recommendations.length > 0) {
-                let recMessage = document.createElement("p");
-                recMessage.className = "chat-message bot recommendations";
-                recMessage.innerHTML = `<strong>Recommendations:</strong> ${data.recommendations.join(', ')}`;
-                chatBox.appendChild(recMessage);
-            }
-        }
-        
-        // If it's a services response, show available services
-        if (data.response_type === "services" && data.services) {
-            let servicesContainer = document.createElement("div");
-            servicesContainer.className = "services-container";
-            
-            data.services.forEach(service => {
-                let serviceItem = document.createElement("p");
-                serviceItem.className = "service-item";
-                serviceItem.innerHTML = `<strong>${service.name}:</strong> ${service.description}`;
-                servicesContainer.appendChild(serviceItem);
-            });
-            
-            chatBox.appendChild(servicesContainer);
-        }
-        
-        // If it's a multiple choice question, create clickable buttons
-        console.log("🔍 Checking condition:", data.response_type === "multiple_choice", "&&", !!data.choices);
-        console.log("🔍 data.response_type === 'multiple_choice':", data.response_type === "multiple_choice");
-        console.log("🔍 data.choices exists:", !!data.choices);
-        console.log("🔍 data.choices length:", data.choices ? data.choices.length : "undefined");
-        
-        if (data.response_type === "multiple_choice" && data.choices) {
-            console.log("✅ Creating buttons for multiple choice response");
-            let choicesContainer = document.createElement("div");
-            choicesContainer.className = "choices-container";
-            choicesContainer.innerHTML = "<strong>Please select:</strong>";
-            
-            data.choices.forEach((choice, index) => {
-                let choiceButton = document.createElement("button");
-                choiceButton.className = "choice-button";
-                choiceButton.textContent = `${index + 1}. ${choice}`;
-                choiceButton.onclick = () => selectChoice(choice, sessionId);
-                choicesContainer.appendChild(choiceButton);
-            });
-            
-            chatBox.appendChild(choicesContainer);
-        }
-
-        // Scroll to latest message
-        chatBox.scrollTop = chatBox.scrollHeight;
-    } catch (error) {
-        console.error("Error sending choice:", error);
-        let errorMessage = document.createElement("p");
-        errorMessage.className = "chat-message bot";
-        errorMessage.innerHTML = `<strong>Bot:</strong> Sorry, something went wrong. Please try again later.`;
-        chatBox.appendChild(errorMessage);
-        chatBox.scrollTop = chatBox.scrollHeight;
-    }
+// Generate a unique session ID for the user
+let sessionId = sessionStorage.getItem('session_id');
+if (!sessionId) {
+    sessionId = 'user_' + Date.now() + Math.random().toString(36).substring(2, 15);
+    sessionStorage.setItem('session_id', sessionId);
 }
 
+let isBotTyping = false;
+
+// --- Refactored and Centralized Message Handling ---
+
+function appendMessage(sender, text, responseType = 'text', choices = []) {
+    const chatbox = document.getElementById('chat-box');
+    const messageDiv = document.createElement('div');
+    messageDiv.classList.add('chat-message', `${sender}`);
+
+    // Use marked.parse() to convert bot messages from Markdown to HTML
+    const messageHtml = sender === 'bot' ? marked.parse(text) : text;
+    messageDiv.innerHTML = `<strong>${sender === 'bot' ? 'Bot' : 'You'}:</strong> ${messageHtml}`;
+    
+    chatbox.appendChild(messageDiv);
+
+    // Handle multiple choice buttons
+    if (responseType === 'multiple_choice' && choices && choices.length > 0) {
+        const choicesContainer = document.createElement('div');
+        choicesContainer.classList.add('choices-container');
+        
+        choices.forEach(choice => {
+            const button = document.createElement('button');
+            button.classList.add('choice-button');
+            button.innerText = choice;
+            button.onclick = () => selectChoice(choice);
+            choicesContainer.appendChild(button);
+        });
+        chatbox.appendChild(choicesContainer);
+    }
+
+    chatbox.scrollTop = chatbox.scrollHeight;
+}
+
+// --- Simplified API Interaction Functions ---
+
 async function sendMessage() {
-    let userInput = document.getElementById("user-input").value;
-    if (!userInput.trim()) return;
+    const userInputField = document.getElementById("user-input");
+    const userInput = userInputField.value.trim();
+    if (!userInput) return;
 
-    let chatBox = document.getElementById("chat-box");
+    appendMessage('user', userInput);
+    userInputField.value = ""; // Clear input field
+    
+    showTypingIndicator();
+    isBotTyping = true;
 
-    // Display user message
-    let userMessage = document.createElement("p");
-    userMessage.className = "chat-message user";
-    userMessage.innerHTML = `<strong>You:</strong> ${userInput}`;
-    chatBox.appendChild(userMessage);
-    document.getElementById("user-input").value = ""; // Clear input field
-
-    // Call API
     try {
-        // Generate or get session ID
-        let sessionId = sessionStorage.getItem('session_id') || 'user_' + Date.now();
-        sessionStorage.setItem('session_id', sessionId);
-
-        let response = await fetch(API_URL, {
+        const response = await fetch(API_URL, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ 
@@ -153,105 +63,121 @@ async function sendMessage() {
             })
         });
 
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        
+        const data = await response.json();
+        handleBotResponse(data);
 
-        let data = await response.json();
-
-        // Display bot response
-        let botMessage = document.createElement("p");
-        botMessage.className = "chat-message bot";
-        
-        // Handle different response types with better debugging
-        console.log("🔍 Server response data (selectChoice):", data);
-        console.log("🔍 response_type (selectChoice):", data.response_type);
-        console.log("🔍 choices (selectChoice):", data.choices);
-        
-        let responseText;
-        if (data.response_type === "diagnostic") {
-            // Handle diagnostic response
-            responseText = data.diagnosis_description || data.final_explanation || "Diagnosis complete.";
-            console.log("🔍 Diagnostic response received (selectChoice):", data.diagnosis_title);
-        } else if (data.response_type === "services") {
-            // Handle services response
-            responseText = "Thank you for providing your symptoms. Here are the available services:";
-            console.log("🔍 Services response received (selectChoice)");
-        } else {
-            // Handle regular responses
-            responseText = data.response_text || data.response || "Sorry, I couldn't process your request.";
-        }
-        console.log("🔍 Using response text (selectChoice):", responseText);
-        
-        botMessage.innerHTML = `<strong>Bot:</strong> ${responseText}`;
-        chatBox.appendChild(botMessage);
-        
-        // If it's a diagnostic response, show additional information
-        if (data.response_type === "diagnostic") {
-            if (data.diagnosis_title) {
-                let titleMessage = document.createElement("p");
-                titleMessage.className = "chat-message bot diagnosis-title";
-                titleMessage.innerHTML = `<strong>Diagnosis:</strong> ${data.diagnosis_title}`;
-                chatBox.appendChild(titleMessage);
-            }
-            
-            if (data.recommendations && data.recommendations.length > 0) {
-                let recMessage = document.createElement("p");
-                recMessage.className = "chat-message bot recommendations";
-                recMessage.innerHTML = `<strong>Recommendations:</strong> ${data.recommendations.join(', ')}`;
-                chatBox.appendChild(recMessage);
-            }
-        }
-        
-        // If it's a services response, show available services
-        if (data.response_type === "services" && data.services) {
-            let servicesContainer = document.createElement("div");
-            servicesContainer.className = "services-container";
-            
-            data.services.forEach(service => {
-                let serviceItem = document.createElement("p");
-                serviceItem.className = "service-item";
-                serviceItem.innerHTML = `<strong>${service.name}:</strong> ${service.description}`;
-                servicesContainer.appendChild(serviceItem);
-            });
-            
-            chatBox.appendChild(servicesContainer);
-        }
-        
-        // If it's a multiple choice question, create clickable buttons
-        if (data.response_type === "multiple_choice" && data.choices) {
-            console.log("✅ Creating buttons for multiple choice response (selectChoice)");
-            let choicesContainer = document.createElement("div");
-            choicesContainer.className = "choices-container";
-            choicesContainer.innerHTML = "<strong>Please select:</strong>";
-            
-            data.choices.forEach((choice, index) => {
-                let choiceButton = document.createElement("button");
-                choiceButton.className = "choice-button";
-                choiceButton.textContent = `${index + 1}. ${choice}`;
-                choiceButton.onclick = () => selectChoice(choice, sessionId);
-                choicesContainer.appendChild(choiceButton);
-            });
-            
-            chatBox.appendChild(choicesContainer);
-        }
-
-        // Scroll to latest message
-        chatBox.scrollTop = chatBox.scrollHeight;
     } catch (error) {
         console.error("Error sending message:", error);
-        // Optionally display an error message in the chat
-        let errorMessage = document.createElement("p");
-        errorMessage.className = "chat-message bot";
-        errorMessage.innerHTML = `<strong>Bot:</strong> Sorry, something went wrong. Please try again later.`;
-        chatBox.appendChild(errorMessage);
-        chatBox.scrollTop = chatBox.scrollHeight;
+        appendMessage('bot', 'Sorry, something went wrong. Please try again later.');
+    } finally {
+        isBotTyping = false;
+        hideTypingIndicator();
     }
 }
 
-// Send message when Enter key is pressed
+async function selectChoice(choice) {
+    appendMessage('user', choice);
+
+    // Disable all choice buttons after a selection is made
+    const buttons = document.querySelectorAll('.choice-button');
+    buttons.forEach(button => {
+        button.disabled = true;
+        button.style.cursor = 'not-allowed';
+        button.style.backgroundColor = '#dcdcdc';
+    });
+    
+    showTypingIndicator();
+    isBotTyping = true;
+
+    try {
+        const response = await fetch(API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                query: choice,
+                session_id: sessionId,
+                is_choice: true
+            })
+        });
+
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        
+        const data = await response.json();
+        handleBotResponse(data);
+
+    } catch (error) {
+        console.error('Error in selectChoice:', error);
+        appendMessage('bot', 'An error occurred. Please try again.');
+    } finally {
+        isBotTyping = false;
+        hideTypingIndicator();
+    }
+}
+
+// --- Centralized Bot Response Handler ---
+
+function handleBotResponse(data) {
+    console.log("🔍 Server response data:", data);
+
+    if (data.response_type === "diagnostic") {
+        const { diagnosis_title, diagnosis_description, recommendations, final_explanation } = data;
+        let fullResponseMarkdown = `### ${diagnosis_title}\n\n`;
+        if (diagnosis_description) fullResponseMarkdown += `${diagnosis_description}\n\n`;
+        if (final_explanation) fullResponseMarkdown += `**Explanation:** ${final_explanation}\n\n`;
+        if (recommendations && recommendations.length > 0) {
+            fullResponseMarkdown += `**Recommendations:**\n${recommendations.map(r => `* ${r}`).join('\n')}`;
+        }
+        appendMessage('bot', fullResponseMarkdown);
+
+    } else if (data.response_type === "multiple_choice") {
+        appendMessage('bot', data.response_text, 'multiple_choice', data.choices);
+
+    } else if (data.response_type === "services") {
+        appendMessage('bot', "Here are some services that might help. Let me know if you'd like to book one.");
+        // Here you could also render the services list if needed
+    } else {
+        const responseText = data.response_text || data.response || "Sorry, I couldn't process your request.";
+        appendMessage('bot', responseText);
+    }
+}
+
+// --- UI Helpers ---
+
+function showTypingIndicator() {
+    const chatbox = document.getElementById('chat-box');
+    let typingIndicator = document.getElementById('typing-indicator');
+    if (!typingIndicator) {
+        typingIndicator = document.createElement('p');
+        typingIndicator.id = 'typing-indicator';
+        typingIndicator.className = 'chat-message bot';
+        typingIndicator.innerHTML = `<strong>Bot:</strong> is typing...`;
+        chatbox.appendChild(typingIndicator);
+    }
+    typingIndicator.style.display = 'block';
+    chatbox.scrollTop = chatbox.scrollHeight;
+}
+
+function hideTypingIndicator() {
+    const typingIndicator = document.getElementById('typing-indicator');
+    if (typingIndicator) {
+        typingIndicator.style.display = 'none';
+    }
+}
+
+// --- Event Listeners ---
+
 document.getElementById("user-input").addEventListener("keypress", function(event) {
     if (event.key === "Enter") {
         sendMessage();
     }
-}); 
+});
+
+// Initial greeting
+window.onload = function() {
+    const chatBox = document.getElementById('chat-box');
+    if (chatBox.children.length === 0) {
+        appendMessage('bot', "Hello! I am your AI Health Consultant. How can I help you today?");
+    }
+}; 
