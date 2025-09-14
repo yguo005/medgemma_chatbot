@@ -16,6 +16,13 @@ EMBEDDING_DIMENSION = 1536  # OpenAI ada-002 dimension
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 50
 
+RAG_CONFIG = {
+    "DB_FAISS_PATH": DB_FAISS_PATH,
+    "EMBEDDING_MODEL": EMBEDDING_MODEL,
+    "CHUNK_SIZE": CHUNK_SIZE,
+    "CHUNK_OVERLAP": CHUNK_OVERLAP
+}
+
 # ==========================================
 # PHASE 1: MedGemma Configuration
 # ==========================================

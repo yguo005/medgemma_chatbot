@@ -3,7 +3,7 @@ import traceback
 from langchain_openai import OpenAIEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.vectorstores import VectorStoreRetriever
-from config.settings import DB_FAISS_PATH, EMBEDDING_MODEL
+from config import settings
 from src.services.ai.medgemma.medgemma_service import MedGemmaService
 from src.services.ai.medgemma.model_garden import MedGemmaModelGarden
 import logging
@@ -18,18 +18,22 @@ class Chatbot:
     Chatbot class that integrates a FAISS vector store with an AI service.
     This class is responsible for Retrieval-Augmented Generation (RAG).
     """
-    def __init__(self, openai_api_key: str, ai_service):
+    def __init__(self, rag_config: dict, openai_api_key: str, ai_service):
         """
         Initialize the Chatbot with a vector store and an AI service.
         
         Args:
+            rag_config: A dictionary containing RAG settings from config.settings.
             openai_api_key: The API key for OpenAI embeddings.
             ai_service: An initialized AI service manager that handles model interactions.
         """
         try:
             # Initialize embeddings and vector store for RAG
-            self.embeddings = OpenAIEmbeddings(openai_api_key=openai_api_key)
-            self.db_path = "data/vectorstore/db_faiss"
+            self.embeddings = OpenAIEmbeddings(
+                model=rag_config.get("EMBEDDING_MODEL", "text-embedding-ada-002"),
+                openai_api_key=openai_api_key
+            )
+            self.db_path = rag_config.get("DB_FAISS_PATH", "data/vectorstore/db_faiss")
             self.vector_store = FAISS.load_local(self.db_path, self.embeddings, allow_dangerous_deserialization=True)
             logger.info("FAISS vector store loaded successfully")
         except Exception as e:
@@ -105,5 +109,5 @@ class Chatbot:
         return {
             "rag_service_status": "healthy",
             "vector_store_initialized": self.vector_store is not None,
-            "embedding_model": "text-embedding-ada-002"
+            "embedding_model": settings.EMBEDDING_MODEL
         }

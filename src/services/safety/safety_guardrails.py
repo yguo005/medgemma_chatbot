@@ -3,6 +3,8 @@ import logging
 from typing import Dict, Any, List, Tuple
 from enum import Enum
 
+from config import settings
+
 logger = logging.getLogger(__name__)
 
 class SafetyLevel(Enum):
@@ -16,7 +18,12 @@ class MedicalSafetyGuardrails:
     Based on the project requirements for responsible AI
     """
     
-    def __init__(self):
+    def __init__(self, config: dict = None):
+        if config is None:
+            config = settings.SAFETY_CONFIG
+
+        self.config = config
+        
         # Emergency keywords that require immediate medical attention
         self.emergency_keywords = {
             'chest pain', 'can\'t breathe', 'difficulty breathing', 'suicidal thoughts',
@@ -71,6 +78,9 @@ Remember: You provide information to help users prepare for medical consultation
         Returns:
             Tuple of (SafetyLevel, emergency_message)
         """
+        if not self.config.get("enable_emergency_detection", True):
+            return SafetyLevel.SAFE, ""
+            
         user_input_lower = user_input.lower()
         
         for keyword in self.emergency_keywords:
@@ -107,6 +117,14 @@ Your safety is the top priority. Do not wait - get help now."""
         Returns:
             Dict with validation results and filtered response
         """
+        if not self.config.get("enable_response_filtering", True):
+            return {
+                "is_safe": True,
+                "issues": [],
+                "filtered_response": ai_response,
+                "severity_score": 0.0
+            }
+            
         issues = []
         filtered_response = ai_response
         
@@ -122,11 +140,11 @@ Your safety is the top priority. Do not wait - get help now."""
         severity_score = self._calculate_severity_score(ai_response)
         
         # Add mandatory disclaimer if not present
-        if not self._has_disclaimer(filtered_response):
+        if self.config.get("mandatory_disclaimer", True) and not self._has_disclaimer(filtered_response):
             filtered_response = self._add_disclaimer(filtered_response)
         
         return {
-            "is_safe": len(issues) == 0 and severity_score < 0.7,
+            "is_safe": len(issues) == 0 and severity_score < self.config.get("max_severity_threshold", 0.7),
             "issues": issues,
             "filtered_response": filtered_response,
             "severity_score": severity_score,
@@ -155,6 +173,9 @@ Your safety is the top priority. Do not wait - get help now."""
 
     def _calculate_severity_score(self, response: str) -> float:
         """Calculate severity score based on alarming language"""
+        if not self.config.get("enable_severity_scoring", True):
+            return 0.0
+            
         severe_words = [
             'severe', 'critical', 'dangerous', 'life-threatening', 'emergency',
             'urgent', 'immediately', 'serious condition', 'fatal', 'death'
@@ -197,15 +218,16 @@ Your safety is the top priority. Do not wait - get help now."""
             Dict with safety assessment and processed input
         """
         # Check for emergencies first
-        safety_level, emergency_msg = self.check_emergency_keywords(user_input)
-        
-        if safety_level == SafetyLevel.EMERGENCY:
-            return {
-                "safety_level": safety_level,
-                "should_block": True,
-                "emergency_response": emergency_msg,
-                "processed_input": user_input
-            }
+        if self.config.get("enable_emergency_detection", True):
+            safety_level, emergency_msg = self.check_emergency_keywords(user_input)
+            
+            if safety_level == SafetyLevel.EMERGENCY:
+                return {
+                    "safety_level": safety_level,
+                    "should_block": True,
+                    "emergency_response": emergency_msg,
+                    "processed_input": user_input
+                }
         
         return {
             "safety_level": SafetyLevel.SAFE,
@@ -244,3 +266,18 @@ Based on the medical knowledge provided above, give a helpful, informative respo
 **Response:**"""
         
         return safe_prompt
+
+    def get_safety_info(self) -> Dict[str, Any]:
+        """Get information about the current safety configuration."""
+        return {
+            "emergency_keywords_count": len(self.emergency_keywords),
+            "forbidden_phrases_count": len(self.forbidden_phrases),
+            "config": self.config,
+            "safety_features": [
+                f"Emergency Keyword Detection: {'Enabled' if self.config.get('enable_emergency_detection') else 'Disabled'}",
+                f"Response Filtering: {'Enabled' if self.config.get('enable_response_filtering') else 'Disabled'}",
+                f"Severity Scoring: {'Enabled' if self.config.get('enable_severity_scoring') else 'Disabled'}",
+                f"Mandatory Disclaimer: {'Enabled' if self.config.get('mandatory_disclaimer') else 'Disabled'}"
+            ],
+            "disclaimer": "This system includes comprehensive safety measures to ensure responsible AI behavior in medical contexts."
+        }

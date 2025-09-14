@@ -8,6 +8,8 @@ import logging
 from typing import Dict, Any, Optional
 from enum import Enum
 
+from config import settings
+
 logger = logging.getLogger(__name__)
 
 class ServiceMode(Enum):
@@ -22,8 +24,9 @@ class OptimizedAIServiceManager:
     - OpenAI only for audio transcription and emergency fallbacks
     """
     
-    def __init__(self, mode: ServiceMode = ServiceMode.HYBRID):
-        self.mode = mode
+    def __init__(self, config: dict):
+        self.config = config
+        self.mode = ServiceMode(config.get("mode", "hybrid"))
         self.services = {}
         self._initialize_services()
     
@@ -32,61 +35,54 @@ class OptimizedAIServiceManager:
         
         logger.info(f"Initializing AI Service Manager in '{self.mode.value}' mode.")
         
-        # Always try to initialize local MedGemma first
-        try:
-            from src.services.ai.medgemma.medgemma_service import MedGemmaService
-            self.services['medgemma_local'] = MedGemmaService(
-                model_name="google/medgemma-4b-it",
-                use_quantization=None  # Auto-detect based on platform (Mac compatibility)
-            )
-            quant_status = "with auto-detected quantization" if self.services['medgemma_local'].use_quantization else "without quantization (Mac compatible)"
-            logger.info(f" Local MedGemma initialized (multimodal 4B-IT {quant_status})")
-        except Exception as e:
-            logger.warning(f" Local MedGemma failed: {e}")
-            self.services['medgemma_local'] = None
+        
+        if self.config.get("enable_local_medgemma", True):
+            try:
+                from src.services.ai.medgemma.medgemma_service import MedGemmaService
+                self.services['medgemma_local'] = MedGemmaService(**settings.MEDGEMMA_LOCAL_CONFIG)
+                quant_status = "with auto-detected quantization" if self.services['medgemma_local'].use_quantization else "without quantization (Mac compatible)"
+                logger.info(f" Local MedGemma initialized (multimodal 4B-IT {quant_status})")
+            except Exception as e:
+                logger.warning(f" Local MedGemma failed: {e}")
+                self.services['medgemma_local'] = None
         
         # Initialize Model Garden if not in local demo mode
-        if self.mode != ServiceMode.LOCAL_DEMO:
+        if self.mode != ServiceMode.LOCAL_DEMO and self.config.get("enable_cloud_medgemma", True):
             try:
                 from src.services.ai.medgemma.model_garden import MedGemmaModelGarden
-                gcp_project_id = os.getenv("GCP_PROJECT_ID")
-                medgemma_endpoint_id = os.getenv("MEDGEMMA_ENDPOINT_ID")
-                if gcp_project_id and medgemma_endpoint_id:
-                    self.services['medgemma_cloud'] = MedGemmaModelGarden(
-                        project_id=gcp_project_id,
-                        endpoint_id=medgemma_endpoint_id
-                    )
+                if settings.MEDGEMMA_MODEL_GARDEN_CONFIG.get("project_id") and settings.MEDGEMMA_MODEL_GARDEN_CONFIG.get("endpoint_id"):
+                    self.services['medgemma_cloud'] = MedGemmaModelGarden(**settings.MEDGEMMA_MODEL_GARDEN_CONFIG)
                     logger.info(" MedGemma Model Garden initialized")
                 else:
                     self.services['medgemma_cloud'] = None
-                    if not gcp_project_id:
-                        logger.warning(" GCP_PROJECT_ID not set, Model Garden disabled.")
-                    if not medgemma_endpoint_id:
-                        logger.warning(" MEDGEMMA_ENDPOINT_ID not set, Model Garden disabled.")
+                    if not settings.MEDGEMMA_MODEL_GARDEN_CONFIG.get("project_id"):
+                        logger.warning(" GCP_PROJECT_ID not set in settings, Model Garden disabled.")
+                    if not settings.MEDGEMMA_MODEL_GARDEN_CONFIG.get("endpoint_id"):
+                        logger.warning(" MEDGEMMA_ENDPOINT_ID not set in settings, Model Garden disabled.")
 
             except Exception as e:
                 logger.warning(f" Model Garden failed: {e}")
                 self.services['medgemma_cloud'] = None
         
         # Initialize OpenAI services (primarily for audio)
-        try:
-            from src.services.ai.openai_services import AIServices
-            openai_key = os.getenv("OPENAI_API_KEY")
-            if openai_key:
-                self.services['openai'] = AIServices(
-                    api_key=openai_key,
-                    use_medgemma=False  # Don't let it override our logic
-                )
-                logger.info(" OpenAI services initialized (audio + fallback)")
-            else:
-                self.services['openai'] = None
-                if self.mode == ServiceMode.LOCAL_DEMO:
-                    logger.info("  Demo mode: OpenAI disabled (audio unavailable)")
+        if self.config.get("enable_openai_fallback", True):
+            try:
+                from src.services.ai.openai_services import AIServices
+                if settings.OPENAI_CONFIG.get("api_key"):
+                    self.services['openai'] = AIServices(
+                        api_key=settings.OPENAI_CONFIG["api_key"],
+                        use_medgemma=False  # Don't let it override our logic
+                    )
+                    logger.info(" OpenAI services initialized (audio + fallback)")
                 else:
-                    logger.warning("  OpenAI API key missing (audio unavailable)")
-        except Exception as e:
-            logger.warning(f" OpenAI services failed: {e}")
-            self.services['openai'] = None
+                    self.services['openai'] = None
+                    if self.mode == ServiceMode.LOCAL_DEMO:
+                        logger.info("  Demo mode: OpenAI disabled (audio unavailable)")
+                    else:
+                        logger.warning("  OpenAI API key missing (audio unavailable)")
+            except Exception as e:
+                logger.warning(f" OpenAI services failed: {e}")
+                self.services['openai'] = None
     
     async def analyze_image(self, image_data: str, context: str = "medical") -> Dict[str, Any]:
         """
@@ -396,13 +392,6 @@ For your safety, please consider:
         }
 
 # Factory function for easy initialization
-def create_ai_service_manager(mode_str: str = "hybrid") -> OptimizedAIServiceManager:
+def create_ai_service_manager(config: dict) -> OptimizedAIServiceManager:
     """Create AI service manager with specified mode"""
-    mode_map = {
-        "local_demo": ServiceMode.LOCAL_DEMO,
-        "hybrid": ServiceMode.HYBRID,
-        "cloud_first": ServiceMode.CLOUD_FIRST
-    }
-    
-    mode = mode_map.get(mode_str.lower(), ServiceMode.HYBRID)
-    return OptimizedAIServiceManager(mode)
+    return OptimizedAIServiceManager(config)

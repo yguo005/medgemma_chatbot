@@ -22,7 +22,7 @@ class ConversationState(Enum):
     FOLLOWUP = "followup"
 
 class ConversationManager:
-    def __init__(self, ai_service=None, rag_service=None):
+    def __init__(self, ai_service=None, rag_service=None, safety_config: dict = None):
         # In-memory storage for demo purposes
         # In production, use Redis or a database
         self.sessions: Dict[str, Dict] = {}
@@ -35,6 +35,9 @@ class ConversationManager:
         # RAG service for dynamic question generation (Phase 2)
         self.rag_service = rag_service  # Will be Chatbot (RAG system)
         self.use_rag_questions = rag_service is not None
+
+        # Safety configuration
+        self.safety_config = safety_config or {}
     
     def cleanup_expired_sessions(self):
         """Remove expired sessions to prevent memory leaks"""

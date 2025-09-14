@@ -11,6 +11,9 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+# Import project settings
+from config import settings
+
 # Import modules from new structure
 from src.services.conversation.manager import ConversationManager
 from src.services.ai.ai_service_manager import create_ai_service_manager
@@ -22,26 +25,24 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- Environment and Configuration ---
-AI_SERVICE_MODE = os.getenv("AI_SERVICE_MODE", "hybrid")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-USE_MEDGEMMA_GARDEN = os.getenv("USE_MEDGEMMA_GARDEN", "false").lower() == "true"
-GCP_PROJECT_ID = os.getenv("GCP_PROJECT_ID")
-MEDGEMMA_ENDPOINT_ID = os.getenv("MEDGEMMA_ENDPOINT_ID")
+# --- Configuration Validation ---
+# Validate the configuration on startup
+settings.validate_configuration()
 
 # --- Service Initialization ---
 try:
-    logger.info(f"Initializing services in '{AI_SERVICE_MODE}' mode...")
+    logger.info(f"Initializing services in '{settings.AI_SERVICE_MODE}' mode...")
 
     # 1. Initialize the AI Service Manager (handles MedGemma logic)
     # This is the primary interface for generating medical responses.
-    ai_service_manager = create_ai_service_manager(AI_SERVICE_MODE)
+    ai_service_manager = create_ai_service_manager(settings.AI_SERVICE_MANAGER_CONFIG)
     logger.info(" AI Service Manager initialized.")
 
     # 2. Initialize the RAG service (for knowledge base lookups)
     # This is used for dynamic, context-aware question generation.
     rag_service = Chatbot(
-        openai_api_key=OPENAI_API_KEY,
+        rag_config=settings.RAG_CONFIG,
+        openai_api_key=settings.OPENAI_CONFIG["api_key"],
         ai_service=ai_service_manager  # Inject the AI service manager
     )
     logger.info(" RAG Service (Chatbot) initialized.")
@@ -50,12 +51,13 @@ try:
     # This orchestrates the conversation flow, using the AI and RAG services.
     conversation_manager = ConversationManager(
         ai_service=ai_service_manager,
-        rag_service=rag_service
+        rag_service=rag_service,
+        safety_config=settings.SAFETY_CONFIG
     )
     logger.info(" Conversation Manager initialized.")
 
     # 4. Initialize Safety Guardrails
-    safety_guardrails = MedicalSafetyGuardrails()
+    safety_guardrails = MedicalSafetyGuardrails(settings.SAFETY_CONFIG)
     logger.info(" Medical Safety Guardrails initialized.")
 
     logger.info(" All services initialized successfully!")
@@ -339,7 +341,7 @@ async def health_check():
     # Base status
     status = {
         "api_status": "healthy",
-        "ai_service_mode": AI_SERVICE_MODE,
+        "configuration": settings.get_active_config(),
         "architecture": "MedGemma + RAG + Safety Guardrails"
     }
 
@@ -368,18 +370,9 @@ async def health_check():
 @app.get("/safety-info")
 async def get_safety_info():
     """Get information about safety guardrails."""
-    return {
-        "emergency_keywords_count": len(safety_guardrails.emergency_keywords),
-        "forbidden_phrases_count": len(safety_guardrails.forbidden_phrases),
-        "safety_features": [
-            "Emergency keyword detection",
-            "Diagnostic language filtering", 
-            "Automatic disclaimer injection",
-            "Response severity scoring",
-            "Medical system prompt enforcement"
-        ],
-        "disclaimer": "This system includes comprehensive safety measures to ensure responsible AI behavior in medical contexts."
-    }
+    if not safety_guardrails:
+         raise HTTPException(status_code=503, detail="Safety guardrails are not initialized.")
+    return safety_guardrails.get_safety_info()
 
 @app.get("/")
 async def read_index():
