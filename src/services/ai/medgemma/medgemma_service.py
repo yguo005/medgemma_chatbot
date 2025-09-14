@@ -473,32 +473,7 @@ class MedGemmaService:
         response = self.processor_or_tokenizer.decode(generation, skip_special_tokens=True)
         return response
 
-    # Legacy method compatibility
-    async def analyze_symptoms(self, symptoms: str, duration: str = "", intensity: str = "", timing: str = "") -> Dict[str, Any]:
-        """Legacy method for symptom analysis"""
-        context_parts = [f"Symptoms: {symptoms}"]
-        if duration:
-            context_parts.append(f"Duration: {duration}")
-        if intensity:
-            context_parts.append(f"Intensity: {intensity}")
-        if timing:
-            context_parts.append(f"Timing: {timing}")
-        
-        context = ". ".join(context_parts)
-        query = "Based on these symptoms, what medical conditions should be considered and what steps should the patient take?"
-        
-        return await self.generate_medical_response(query, context)
-
-    async def enhance_diagnosis(self, symptoms: str, rag_response: str) -> str:
-        """Legacy method for diagnosis enhancement"""
-        query = f"Given these symptoms: {symptoms}\n\nAnd this medical information: {rag_response}\n\nProvide a clear, helpful medical summary with appropriate recommendations."
-        
-        result = await self.generate_medical_response(query)
-        
-        if result["success"]:
-            return result["response"]
-        else:
-            return rag_response  # Fallback to original RAG response
+    
     
     def get_model_info(self) -> Dict[str, Any]:
         """Get information about the loaded model"""
