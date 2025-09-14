@@ -34,8 +34,8 @@ class MedicalSafetyGuardrails:
         
         # Forbidden diagnostic phrases that should never appear in responses
         self.forbidden_phrases = [
-            'you have', 'the diagnosis is', 'this is definitely', 'you definitely have',
-            'i diagnose you with', 'you are suffering from', 'the condition is',
+            'the diagnosis is', 'this is definitely', 'you definitely have',
+            'i diagnose you with', 'you are suffering from',
             'you need to take', 'the treatment is', 'you should take medication'
         ]
         
@@ -203,9 +203,7 @@ Your safety is the top priority. Do not wait - get help now."""
         disclaimer = "\n\n*Please remember: This information is for educational purposes only and is not a substitute for professional medical advice. Always consult with a healthcare provider for proper diagnosis and treatment.*"
         return response + disclaimer
 
-    def get_medical_system_prompt(self) -> str:
-        """Get the complete system prompt for medical AI"""
-        return self.medical_system_prompt
+    
 
     def process_user_input(self, user_input: str) -> Dict[str, Any]:
         """
@@ -236,36 +234,7 @@ Your safety is the top priority. Do not wait - get help now."""
             "processed_input": user_input
         }
 
-    def create_safe_medical_prompt(self, user_query: str, retrieved_context: str) -> str:
-        """
-        Create a safe medical prompt combining system instructions, context, and user query
-        
-        Args:
-            user_query: User's medical question
-            retrieved_context: Retrieved medical knowledge from RAG
-            
-        Returns:
-            Complete prompt with safety guardrails
-        """
-        safe_prompt = f"""{self.medical_system_prompt}
-
-**Medical Knowledge Context:**
-{retrieved_context}
-
-**User's Question:**
-{user_query}
-
-**Instructions:**
-Based on the medical knowledge provided above, give a helpful, informative response about the user's symptoms or question. Remember to:
-1. Use cautious, probabilistic language
-2. Suggest consulting healthcare professionals
-3. Avoid definitive diagnoses
-4. Be supportive and informative
-5. Include appropriate disclaimers
-
-**Response:**"""
-        
-        return safe_prompt
+    
 
     def get_safety_info(self) -> Dict[str, Any]:
         """Get information about the current safety configuration."""
