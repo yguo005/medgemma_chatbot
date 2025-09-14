@@ -16,6 +16,7 @@ class ConversationState(Enum):
     INTENSITY_INQUIRY = "intensity_inquiry"
     TIMING_INQUIRY = "timing_inquiry"
     FREQUENCY_INQUIRY = "frequency_inquiry"
+    ASSOCIATED_SYMPTOM_INQUIRY = "associated_symptom_inquiry"  # New state
     DIAGNOSIS = "diagnosis"
     SERVICES = "services"
     COMPLETED = "completed"
@@ -112,6 +113,8 @@ class ConversationManager:
                 return await self._handle_timing_inquiry(session_id, message, is_choice)
             elif current_state == ConversationState.FREQUENCY_INQUIRY:
                 return await self._handle_frequency_inquiry(session_id, message, is_choice)
+            elif current_state == ConversationState.ASSOCIATED_SYMPTOM_INQUIRY:
+                return await self._handle_associated_symptom_inquiry(session_id, message)
             elif current_state == ConversationState.DIAGNOSIS:
                 return self._handle_diagnosis(session_id, message)
             elif current_state == ConversationState.SERVICES:
@@ -277,31 +280,70 @@ class ConversationManager:
         return fallback_response
 
     async def _handle_frequency_inquiry(self, session_id: str, message: str, is_choice: bool) -> Dict[str, Any]:
-        """Handle frequency selection and provide diagnosis."""
+        """Handle frequency, then check for associated symptoms before diagnosis."""
         session = self.get_session(session_id)
         session['collected_data']['frequency'] = message
+
+        # Check for unaddressed associated symptoms from the initial AI extraction
+        ai_data = session['collected_data'].get('ai_extracted_data', {})
+        associated_symptoms = ai_data.get('associated_symptoms', [])
+
+        # If other symptoms were mentioned, ask about them now
+        if associated_symptoms:
+            session['state'] = ConversationState.ASSOCIATED_SYMPTOM_INQUIRY
+            
+            # Format the list of symptoms for the question
+            if len(associated_symptoms) > 1:
+                symptom_list = ", ".join([f"'{s}'" for s in associated_symptoms[:-1]]) + f" and '{associated_symptoms[-1]}'"
+            else:
+                symptom_list = f"'{associated_symptoms[0]}'"
+
+            question = f"Thank you for the details. You also mentioned {symptom_list}. Could you tell me more about those symptoms?"
+            
+            self.add_to_history(session_id, message, question)
+            return {"response_type": "text", "response_text": question}
+
+        # If no other symptoms, proceed directly to diagnosis
+        return await self._proceed_to_diagnosis(session_id, message)
+
+    async def _handle_associated_symptom_inquiry(self, session_id: str, message: str) -> Dict[str, Any]:
+        """Store details about associated symptoms and then proceed to diagnosis."""
+        session = self.get_session(session_id)
+        session['collected_data']['associated_symptoms_details'] = message
+        return await self._proceed_to_diagnosis(session_id, message)
+
+    async def _proceed_to_diagnosis(self, session_id: str, message: str) -> Dict[str, Any]:
+        """Generate the final diagnosis after all information is collected."""
+        session = self.get_session(session_id)
         session['state'] = ConversationState.DIAGNOSIS
         
-        # Generate diagnosis based on collected data
+        # Generate a preliminary diagnosis title based on collected data
         diagnosis = self._generate_diagnosis(session['collected_data'])
         
         # Phase 3: Generate final explanation using RAG + AI
         final_explanation_result = {"explanation": "", "success": False}
         if self.rag_service:
             try:
-                # Construct comprehensive medical query for final diagnosis
+                # Construct a more comprehensive prompt including all symptoms
                 collected_data = session['collected_data']
+                primary_symptom_details = f"""
+                - Primary Symptom: {collected_data.get('symptoms', '')}
+                - Duration: {collected_data.get('duration', '')}
+                - Intensity: {collected_data.get('intensity', '')}
+                - Timing: {collected_data.get('timing', '')}
+                - Frequency: {collected_data.get('frequency', '')}
+                """
+                associated_symptoms_details = f"- Other Symptoms: {collected_data.get('associated_symptoms_details', 'None')}"
+
                 final_prompt = f"""
-                Primary symptoms: {collected_data.get('symptoms', '')}
-                Duration: {collected_data.get('duration', '')}
-                Intensity: {collected_data.get('intensity', '')}
-                Timing: {collected_data.get('timing', '')}
-                Frequency: {collected_data.get('frequency', '')}
-                
-                Please provide medical information and recommendations for these symptoms.
+                Patient has provided the following information:
+                {primary_symptom_details}
+                {associated_symptoms_details}
+
+                Please provide a medical analysis and recommendations based on all these symptoms.
                 """
                 
-                # This call uses the full RAG + MedGemma-prioritized flow for maximum accuracy
+                # This call uses the full RAG + MedGemma-prioritized flow
                 final_explanation = await self.rag_service.get_diagnostic_response(final_prompt)
                 final_explanation_result = {
                     "explanation": final_explanation,
@@ -323,7 +365,7 @@ class ConversationManager:
             "response_type": "diagnostic",
             "diagnosis_title": diagnosis['title'],
             "diagnosis_description": diagnosis['description'],
-            "final_explanation": final_explanation_result['explanation'],  # Phase 3 result
+            "final_explanation": final_explanation_result['explanation'],
             "explanation_source": final_explanation_result.get('generation_method', 'unknown'),
             "key_terms_explained": final_explanation_result.get('key_terms', []),
             "recommendations": diagnosis['recommendations'],

@@ -71,7 +71,6 @@ class MedGemmaModelGarden:
             )
 
             # --- CRITICAL FIX: Load the Vertex AI Endpoint ---
-            # This step was missing. We need the endpoint object to get its DNS.
             if not self.endpoint_id:
                 logger.error("Vertex AI Endpoint ID is missing. Cannot initialize Model Garden client.")
                 raise ValueError("An ENDPOINT_ID is required for Model Garden.")
@@ -89,7 +88,6 @@ class MedGemmaModelGarden:
             creds.refresh(auth_req)
 
             # --- IMPROVEMENT: Use robust URL construction from official notebook ---
-            # This logic is now functional because self.endpoint is loaded.
             endpoint_resource_name = self.endpoint.resource_name
             try:
                 # Try to get the dedicated endpoint DNS - this is the primary method for Model Garden
@@ -154,14 +152,7 @@ class MedGemmaModelGarden:
                 "error": str(e)
             }
 
-    async def analyze_symptoms_text(self, symptoms: str, context: str = "") -> Dict[str, Any]:
-        """Analyzes text-based symptoms using MedGemma 4B."""
-        system_prompt = self._construct_medical_prompt()
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Context: {context}\n\nSymptoms: {symptoms}\n\nPlease provide an analysis."}
-        ]
-        return await self.generate_medical_response(messages)
+    
 
     async def analyze_symptoms_multimodal(self, text_prompt: str, image_url: str) -> Dict[str, Any]:
         """Analyzes symptoms with text and an image using MedGemma 4B."""
@@ -181,16 +172,7 @@ class MedGemmaModelGarden:
         ]
         return await self.generate_medical_response(messages)
     
-    def _construct_medical_prompt(self) -> str:
-        """Constructs a medical prompt optimized for MedGemma 4B."""
-        return """You are a medical AI assistant powered by MedGemma 4B. Your role is to provide helpful, accurate medical information while always emphasizing the importance of consulting a healthcare professional for diagnosis and treatment. 
-
-Key guidelines:
-- Be informative but not diagnostic
-- Use probabilistic language ("could be related to", "might indicate")
-- Always recommend professional medical consultation
-- Keep responses concise and clear
-- Maintain a supportive, professional tone"""
+    
     
     def _extract_response(self, generated_text: str) -> str:
         """Extracts and cleans the response."""
