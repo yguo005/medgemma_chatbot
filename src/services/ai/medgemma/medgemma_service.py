@@ -30,8 +30,7 @@ class MedGemmaService:
         self, 
         model_name: str = "google/medgemma-4b-it",
         device: str = "auto",
-        use_quantization: bool = None,  # Auto-detect based on platform
-        multimodal: Optional[bool] = None
+        use_quantization: Optional[bool] = None  # Auto-detect based on platform
     ):
         """
         Initialize MedGemma service with LAZY LOADING and Mac compatibility.
@@ -42,7 +41,6 @@ class MedGemmaService:
             model_name: HuggingFace model identifier.
             device: Device setting ("auto").
             use_quantization: Enable 4-bit quantization (auto-detected if None).
-            multimodal: Auto-detected from model name.
         """
         self.model_name = model_name
         

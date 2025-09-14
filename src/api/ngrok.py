@@ -1,4 +1,4 @@
-# Run the FastAPI Server using ngrok
+# Run the FastAPI Server using ngrok on Colab
 import os
 import sys
 import asyncio
