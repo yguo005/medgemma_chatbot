@@ -57,18 +57,14 @@ MEDGEMMA_MODEL_GARDEN_CONFIG = {
     "project_id": GCP_PROJECT_ID,
     "location": "us-central1",
     "endpoint_id": MEDGEMMA_ENDPOINT_ID,
-    "model_name": "google/medgemma-4b",  
-    "credentials_path": os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    "credentials_path": os.getenv("GCP_CREDENTIALS_PATH")
 }
 
 # Local MedGemma Configuration (Development)
 MEDGEMMA_LOCAL_CONFIG = {
-    "model_name": "google/medgemma-4b-it",  # Updated to use instruction-tuned variant
+    "model_name": "google/medgemma-4b-it",
     "device": "auto",
-    "use_quantization": True,  # Memory efficiency
-    "multimodal": True,  # Enable for image processing with ai_service_manager
-    "max_length": 512,
-    "temperature": 0.3  # Conservative for medical responses
+    "use_quantization": None # Auto-detect
 }
 
 # ==========================================
