@@ -118,7 +118,7 @@ class MedGemmaService:
     
     def _load_model_and_processor(self):
         """
-        Load model following official Google notebook implementation exactly.
+        Load model from Hugging Face (local mode) following official Google notebook implementation exactly.
         Includes memory optimization and better error handling.
         """
         try:
@@ -199,7 +199,7 @@ class MedGemmaService:
         **kwargs
     ) -> Dict[str, Any]:
         """
-        Generate medical response using the optimized direct method with LAZY LOADING.
+        Generate medical response using local mode Hugging Face with LAZY LOADING.
         
         Args:
             query: User's medical question.
