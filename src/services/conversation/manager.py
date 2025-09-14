@@ -30,7 +30,7 @@ class ConversationManager:
         self.session_timeout = timedelta(hours=1)  # Sessions expire after 1 hour
         
         # AI service for symptom understanding (Phase 1)
-        self.ai_service = ai_service  # Will be MedGemmaService or ai_service_manager
+        self.ai_service = ai_service  
         self.use_ai_extraction = ai_service is not None
         
         # RAG service for dynamic question generation (Phase 2)
@@ -474,6 +474,8 @@ class ConversationManager:
             "urgency_level": urgency
         }
     
+    # This is a rule-based method. 
+    # It uses simple if/elif logic based on keywords (e.g., "headache", "knee") to generate a quick, preliminary title and a list of recommendations. It does not call an AI.
     def _generate_diagnosis(self, collected_data: Dict) -> Dict[str, Any]:
         """Generate diagnosis based on collected symptoms with AI-enhanced logic"""
         symptoms = collected_data.get('symptoms', '').lower()
@@ -843,102 +845,7 @@ Question:"""
             "generation_method": "fallback"
         }
 
-    async def _generate_final_explanation_with_rag(self, diagnosis_title: str) -> Dict[str, Any]:
-        """
-        Phase 3: AI for Generating the Final Explanation using RAG
-        Generate trustworthy, user-friendly explanations based on medical encyclopedia context
-        """
-        try:
-            # Step 1: Extract key medical terms from diagnosis title
-            key_terms = self._extract_medical_terms_from_diagnosis(diagnosis_title)
-            logger.info(f" Extracted key terms for explanation: {key_terms}")
-            
-            # Step 2: Retrieve factual context from medical encyclopedia using RAG
-            rag_query = f"{' '.join(key_terms)} definition medical encyclopedia explanation"
-            
-            if self.rag_service:
-                encyclopedia_context = await self.rag_service.get_response(query=rag_query)
-                
-                logger.info(f" Retrieved encyclopedia context: {encyclopedia_context[:200]}...")
-            else:
-                encyclopedia_context = "No trusted medical context available."
-            
-            # Step 3: Generate user-friendly explanation using AI + RAG context
-            explanation_prompt = f"""You are a medical AI assistant creating a patient-friendly explanation based on trusted medical sources.
-
-CONTEXT FROM MEDICAL ENCYCLOPEDIA:
-{encyclopedia_context}
-
-DIAGNOSIS TITLE: {diagnosis_title}
-
-TASK: Based on the medical encyclopedia context above, write a simple, easy-to-understand explanation for a patient about their condition.
-
-REQUIREMENTS:
-1. Use the factual information from the encyclopedia context
-2. Explain medical terms in simple language
-3. Focus on what the condition is and why medical consultation is important
-4. Keep the tone reassuring but emphasize professional medical guidance
-5. Do not diagnose or provide specific medical advice
-6. Limit to 2-3 sentences
-
-OUTPUT FORMAT: Return only the plain text explanation, no additional formatting."""
-
-            # Call AI service to generate the explanation
-            ai_response = await self.ai_service.generate_medical_response(
-                query=explanation_prompt,
-                context=""
-            )
-            
-            if ai_response.get('success'):
-                explanation = ai_response.get('response', '').strip()
-            else:
-                raise Exception(f"AI service error: {ai_response.get('error', 'Unknown error')}")
-            
-            logger.info(f" Generated final explanation: {explanation[:100]}...")
-            
-            return {
-                "explanation": explanation,
-                "encyclopedia_context": encyclopedia_context[:500],  # Include source context
-                "key_terms": key_terms,
-                "generation_method": "rag_explanation",
-                "success": True
-            }
-            
-        except Exception as e:
-            logger.error(f" Final explanation generation failed: {e}")
-            return self._generate_fallback_explanation(diagnosis_title)
     
-    def _extract_medical_terms_from_diagnosis(self, diagnosis_title: str) -> List[str]:
-        """Extract key medical terms from diagnosis title for RAG query"""
-        # Common medical terms mapping
-        medical_term_patterns = {
-            'headache': ['headache', 'cephalgia'],
-            'cephalgia': ['headache', 'cephalgia'], 
-            'migraine': ['migraine', 'headache'],
-            'knee': ['knee', 'joint'],
-            'pain': ['pain', 'ache'],
-            'orthopedic': ['orthopedic', 'bone', 'joint'],
-            'gastrointestinal': ['gastrointestinal', 'digestive', 'stomach'],
-            'cardiopulmonary': ['cardiopulmonary', 'heart', 'lung'],
-            'respiratory': ['respiratory', 'breathing', 'lung'],
-            'dermatological': ['dermatological', 'skin'],
-            'neurological': ['neurological', 'nervous system']
-        }
-        
-        diagnosis_lower = diagnosis_title.lower()
-        key_terms = []
-        
-        # Extract terms based on patterns
-        for term, related_terms in medical_term_patterns.items():
-            if term in diagnosis_lower:
-                key_terms.extend(related_terms)
-        
-        # Fallback: extract first few words if no specific patterns found
-        if not key_terms:
-            words = diagnosis_title.split()[:2]  # Take first 2 words
-            key_terms = [word.lower().strip('/:') for word in words if len(word) > 3]
-        
-        return list(set(key_terms))  # Remove duplicates
     
     def _generate_fallback_explanation(self, diagnosis_title: str) -> Dict[str, Any]:
         """Generate fallback explanation when RAG+AI fails"""
